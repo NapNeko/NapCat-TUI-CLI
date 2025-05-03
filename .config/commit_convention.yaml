@@ -12,6 +12,7 @@
 #   - refactor: changes the code without changing behavior
 #   - revert: reverts prior changes
 scopes:
-  - main menu: TUI 的主菜单(napcat)，承担简单显示和操作。分发操作到子脚本。
-  - Config: 处理配置操作
-  - Boot: 处理启动操作
+  - main menu: TUI 的主菜单(napcat)
+  - Config: 配置相关
+  - Boot: 启动相关
+  - Install: 安装相关

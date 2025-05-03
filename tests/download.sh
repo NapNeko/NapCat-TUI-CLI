@@ -64,7 +64,7 @@ function network_test() {
     fi
 }
 function install_napcat_cli() {
-    local cli_script_url_base="https://raw.githubusercontent.com/lux-QAQ/NapCat-Installer/refs/heads/main/script"
+    local cli_script_url_base="https://raw.githubusercontent.com/NapNeko/NapCat-TUI-CLI/main/script"
     local cli_script_name="install-cli.sh"
     local cli_script_local_path="./${cli_script_name}.download" # Download to a temporary name
     local cli_script_url="${target_proxy:+${target_proxy}/}${cli_script_url_base}/${cli_script_name}"
