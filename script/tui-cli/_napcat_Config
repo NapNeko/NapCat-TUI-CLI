@@ -1515,18 +1515,65 @@ add_account() {
                  fi
             fi
 
-            # 检查基础配置文件是否存在
+            # 检查基础配置文件是否存在，这样可能是临时补丁，因为还不知道未来更新是否会变更这些字段，暂时先这样。加入TODO.list
             if [[ ! -f "$BASE_NAPCAT_CONFIG" ]]; then
-                dialog --colors --msgbox "错误：基础配置文件 '$BASE_NAPCAT_CONFIG' 不存在。" 8 60
-                rm -f "$temp_jq_file"
-                trap - EXIT
-                return 2 # 表示基础文件缺失
+                # 显示警告信息
+                dialog --colors --title "基础配置缺失警告" --msgbox "警告：基础配置文件 '$BASE_NAPCAT_CONFIG' 本应存在 但未检测到。\n\n这可能是由于上游更新或 ${FG_RED}安装失败${RESET} 导致的。\n\n目前将使用硬编码的备份创建此文件，但这可能导致未知问题。" 12 70 2>&1 >/dev/tty
+                clear
+
+                # 定义硬编码的 napcat.json 内容
+                local napcat_default_content='{
+                    "fileLog": false,
+                    "consoleLog": true,
+                    "fileLogLevel": "debug",
+                    "consoleLogLevel": "info",
+                    "packetBackend": "auto",
+                    "packetServer": "",
+                    "o3HookMode": 1
+                  }'
+
+                # 尝试创建文件
+                if echo "$napcat_default_content" | jq '.' > "$BASE_NAPCAT_CONFIG"; then
+                    dialog --colors --infobox "已成功创建备份的基础配置文件:\n$BASE_NAPCAT_CONFIG" 6 70 2>&1 >/dev/tty
+                    sleep 2 # 短暂显示信息
+                else
+                    # 创建失败
+                    dialog --colors --msgbox "${FG_RED}错误：${RESET}无法创建基础配置文件 '$BASE_NAPCAT_CONFIG'。\n请检查目录 '$CONFIG_DIR' 的权限或磁盘空间。" 10 70 2>&1 >/dev/tty
+                    rm -f "$temp_jq_file" # 清理临时文件
+                    trap - EXIT # 清除 trap
+                    return 3 # 返回文件创建失败错误码
+                fi
+                # 创建成功后不返回，继续检查下一个文件
             fi
-             if [[ ! -f "$BASE_ONEBOT_CONFIG" ]]; then
-                dialog --colors --msgbox "错误：基础配置文件 '$BASE_ONEBOT_CONFIG' 不存在。" 8 60
-                rm -f "$temp_jq_file"
-                trap - EXIT
-                return 2 # 表示基础文件缺失
+
+            if [[ ! -f "$BASE_ONEBOT_CONFIG" ]]; then
+                # 定义硬编码的 onebot11.json 内容
+                local onebot_default_content='{
+                    "network": {
+                        "httpServers": [],
+                        "httpSseServers": [],
+                        "httpClients": [],
+                        "websocketServers": [],
+                        "websocketClients": [],
+                        "plugins": []
+                    },
+                    "musicSignUrl": "",
+                    "enableLocalFile2Url": true,
+                    "parseMultMsg": false
+                }'
+
+                # 尝试创建文件
+                if echo "$onebot_default_content" | jq '.' > "$BASE_ONEBOT_CONFIG"; then
+                     dialog --colors --infobox "基础配置文件 '$BASE_ONEBOT_CONFIG' 不存在，已使用默认值创建。" 6 70 2>&1 >/dev/tty
+                     sleep 2 # 短暂显示信息
+                else
+                     # 创建失败
+                     dialog --colors --msgbox "${FG_RED}错误：${RESET}无法创建基础配置文件 '$BASE_ONEBOT_CONFIG'。\n请检查目录 '$CONFIG_DIR' 的权限或磁盘空间。" 10 70 2>&1 >/dev/tty
+                     rm -f "$temp_jq_file" # 清理临时文件
+                     trap - EXIT # 清除 trap
+                     return 3 # 返回文件创建失败错误码
+                fi
+                # 创建成功后不返回，继续执行后续操作
             fi
 
             # 复制文件

@@ -63,6 +63,7 @@ function network_test() {
         fi
     fi
 }
+# 这个函数是install.sh的复制版本，由于install.sh功能繁多而且不应该经常被修改，所有这里拷贝了一份必要的函数用于测试下载
 function install_napcat_cli() {
     local cli_script_url_base="https://raw.githubusercontent.com/NapNeko/NapCat-TUI-CLI/main/script"
     local cli_script_name="install-cli.sh"
