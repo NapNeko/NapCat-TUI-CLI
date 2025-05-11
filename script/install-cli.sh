@@ -182,7 +182,7 @@ function install_cli_components() {
     # Updated base_url
     local base_url="https://raw.githubusercontent.com/NapNeko/NapCat-TUI-CLI/main/script/tui-cli"
     local target_dir="/usr/local/bin"
-    local files_to_download=("napcat" "_napcat_Boot" "_napcat_Config")
+    local files_to_download=("napcat" "_napcat_Boot" "_napcat_Config" "_napcat_old")
     local download_failed=false
 
     # Ensure target directory exists (though /usr/local/bin usually does)

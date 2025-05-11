@@ -273,10 +273,24 @@ start_napcat_login() {
     fi
 
     while [[ $timeout -gt 0 ]]; do
+
+        # 检查是否多账户登录
+        if grep -q "无法重复登录" "$log_file"; then
+            dialog --colors --title "登录冲突" --msgbox "${FG_RED}禁止多账户: 您已经登录或者另外一个 Napcat 未关闭。\n请检查并关闭其他 Napcat 实例后重试。${RESET}" 10 70
+            # 尝试清理当前启动的进程和PID文件
+            if [[ -n "$NAPCAT_PID" ]] && sudo kill -0 "$NAPCAT_PID" &>/dev/null; then
+                sudo kill "$NAPCAT_PID" &>/dev/null
+                sleep 1
+                sudo kill -9 "$NAPCAT_PID" &>/dev/null # 强制
+            fi
+            sudo rm -f "$pid_file"
+            return 1 # 返回错误，终止启动
+        fi
+
         # 检查登录成功关键字
         if grep -q "配置加载" "$log_file"; then
             dialog --colors --title "登录成功" --infobox "Napcat (账号: ${BOLD}$qq_account${RESET}) 已成功登录！" 5 55 # 加粗账号，调整宽度
-            sleep 2 # 显示信息一会儿
+            sleep 1 # 显示信息一会儿
             found_login=true
             break
         fi

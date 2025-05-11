@@ -6,10 +6,25 @@ CONFIG_DIR="$NAPCAT_DIR/config" # 与其他脚本保持一致
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 BOOT_SCRIPT="$SCRIPT_DIR/_napcat_Boot"
 CONFIG_SCRIPT="$SCRIPT_DIR/_napcat_Config"
+OLD_CLI_SCRIPT="$SCRIPT_DIR/_napcat_old" # 新增：定义旧版 CLI 脚本路径
 API_SCRIPT="$SCRIPT_DIR/api.sh"
 INIT_FLAG="/var/run/NapcatShellinit.flag" # 首次运行标记文件
 INSTALL_SCRIPT_URL="https://nclatest.znin.net/NapNeko/NapCat-Installer/main/script/install.sh"
 INSTALL_SCRIPT_LOCAL="napcat_install.sh" # 本地安装脚本文件名
+
+
+if [[ "$#" -gt 0 ]]; then
+    if [[ -f "$OLD_CLI_SCRIPT" ]] && [[ -x "$OLD_CLI_SCRIPT" ]]; then
+        # _napcat_old 脚本应自行处理其可能需要的 root 权限检查
+        exec "$OLD_CLI_SCRIPT" "$@"
+    else
+        # 使用 ANSI 红色输出错误信息到 stderr
+        echo -e "\033[0;1;31;91m错误: 旧版 CLI 脚本 '$OLD_CLI_SCRIPT' 未找到或不可执行。\033[0m" >&2
+        exit 1
+    fi
+    # 如果 exec 成功，当前脚本的执行会在此处终止
+fi
+
 
 # --- Dialog 颜色定义 ---
 RESET='\Zn'
@@ -446,52 +461,111 @@ update_napcat() {
 view_log() {
     local status_code
     local output
-    local qq_account
-    local log_file
-    local pid
+    local current_qq_account=""
+    local current_qq_log_file_path="" # 当前活动QQ的日志文件完整路径
+    local log_menu_items=()           # Dialog菜单项数组
+    local log_file_path               # 循环时使用的日志文件路径
+    local qq_from_filename            # 从文件名提取的QQ号
+    local bn                          # basename
+    local choice_tag                  # Dialog选择的标签（即文件路径）
+    local dialog_exit_status          # Dialog退出状态
 
-    # 调用内部函数获取状态和账号/PID
-    output=$(_get_napcat_pid_and_account) # 获取状态和输出
-    status_code=$? # 获取退出码
+    # 获取当前运行的QQ号
+    output=$(_get_napcat_pid_and_account)
+    status_code=$?
 
-    case $status_code in
-        0) # 运行中 (退出码 0)
-            qq_account="$output" # 输出是 QQ 账号
-            log_file="/var/log/napcat_${qq_account}.log" # 构建日志路径
+    if [[ "$status_code" -eq 0 ]]; then
+        current_qq_account="$output"
+        current_qq_log_file_path="/var/log/napcat_${current_qq_account}.log"
+    fi
 
-            # 检查日志文件
-            if [[ ! -f "$log_file" ]] || [[ ! -r "$log_file" ]]; then
-                dialog --colors --title "错误" --msgbox "${FG_RED}无法读取日志文件: ${BOLD}$log_file${RESET}\n\n文件不存在或权限不足。${RESET}" 10 70
-                return 1 # 返回错误
+    # 查找所有的napcat日志文件
+    local all_log_files=()
+    while IFS= read -r -d $'\0' file; do
+        all_log_files+=("$file")
+    done < <(find /var/log/ -maxdepth 1 -type f -name "napcat_*.log" -print0)
+
+    if [[ ${#all_log_files[@]} -eq 0 ]]; then
+        dialog --colors --title "日志文件缺失" --msgbox "在 /var/log/ 目录下没有找到 Napcat 日志文件。" 8 60
+        return 1
+    fi
+
+    # 填充菜单项
+    local active_log_added_to_menu=false
+    # 优先添加当前运行的QQ
+    if [[ -n "$current_qq_account" ]] && [[ -f "$current_qq_log_file_path" ]]; then
+        
+        local found_active_in_all=false
+        for file_in_all in "${all_log_files[@]}"; do
+            if [[ "$file_in_all" == "$current_qq_log_file_path" ]]; then
+                found_active_in_all=true
+                break
             fi
+        done
+        if $found_active_in_all; then
+            log_menu_items+=("$current_qq_log_file_path" "QQ: $current_qq_account ${FG_GREEN}(当前活动)${RESET}")
+            active_log_added_to_menu=true
+        fi
+    fi
 
-            # 清屏并显示提示
-            clear
-            echo -e "${ANSI_GREEN}正在打开日志文件: ${ANSI_BOLD}$log_file${ANSI_RESET}"
-            echo -e "${ANSI_YELLOW}使用 ↑ ↓箭头键 或 PageUp/PageDown 翻页，按 'q' 退出。${ANSI_RESET}"
-            sleep 1.1 # 等待用户阅读提示 (可以考虑缩短为 1 秒)
+    # 添加其他日志文件
+    for log_file_path in "${all_log_files[@]}"; do
+        # 如果是活动日志且已被添加
+        if $active_log_added_to_menu && [[ "$log_file_path" == "$current_qq_log_file_path" ]]; then
+            continue
+        fi
 
-            # 使用 less 查看日志 (-R 显示颜色, +G 从末尾开始)
-            less -R +G "$log_file"
+        bn=$(basename "$log_file_path")
+        if [[ "$bn" =~ napcat_([0-9]+)\.log ]]; then
+            qq_from_filename="${BASH_REMATCH[1]}"
+            log_menu_items+=("$log_file_path" "QQ: $qq_from_filename")
+        else
+            # 对于不符合 napcat_NUM.log 格式的文件名
+            log_menu_items+=("$log_file_path" "$bn")
+        fi
+    done
 
-            # less 退出后清理屏幕
-            clear
-            return 0 # 成功返回
-            ;;
-        1 | 3) # 未运行 (退出码 1) 或 PID 文件问题 (退出码 3)
-            dialog --colors --title "无法查看日志" --msgbox "${FG_RED}Napcat 未运行，请启动后查看日志。${RESET}" 8 60
-            return 1 # 返回错误
-            ;;
-        2) # 状态未知 (退出码 2)
-            pid="$output" # 输出是 PID
-            dialog --colors --title "无法查看日志" --msgbox "${FG_RED}无法确定 Napcat 运行账号 (PID: ${BOLD}$pid${RESET})。\n请检查 Napcat 进程或日志文件命名。${RESET}" 9 70
-            return 1 # 返回错误
-            ;;
-        *) 
-            dialog --colors --title "错误" --msgbox "${FG_RED}检查 Napcat 状态时发生未知错误。${RESET}" 8 60
-            return 1 # 返回错误
-            ;;
-    esac
+    if [[ ${#log_menu_items[@]} -eq 0 ]]; then
+        # 此情况意味着找到了日志文件，但无法处理成菜单项
+        dialog --colors --title "无有效日志" --msgbox "找到了日志文件，但无法解析以供选择。" 8 70
+        return 1
+    fi
+
+    local num_dialog_items=$(( ${#log_menu_items[@]} / 2 ))
+    # 如果菜单项数量为0
+    if [[ $num_dialog_items -eq 0 ]]; then
+        dialog --colors --title "错误" --msgbox "准备日志菜单时发生内部错误。" 8 60
+        return 1
+    fi
+    
+    choice_tag=$(dialog --colors --title "选择日志文件" \
+                        --ok-label "查看" \
+                        --cancel-label "返回" \
+                        --menu "请选择要查看的日志文件:" \
+                        20 70 "$num_dialog_items" \
+                        "${log_menu_items[@]}" \
+                        2>&1 >/dev/tty)
+    
+    dialog_exit_status=$?
+    clear # 清除Dialog界面
+
+    if [[ $dialog_exit_status -eq 0 ]]; then # "查看"
+        local selected_log_file="$choice_tag" 
+        if [[ -n "$selected_log_file" ]] && [[ -f "$selected_log_file" ]] && [[ -r "$selected_log_file" ]]; then
+            echo -e "${ANSI_GREEN}正在打开日志: ${ANSI_BOLD}$selected_log_file${ANSI_RESET}"
+            echo -e "${ANSI_YELLOW}使用 ↑ ↓箭头键 或 PageUp/PageDown 键翻页, 按 'q' 键退出查看。${ANSI_RESET}"
+            sleep 1
+            less -R +G "$selected_log_file" 
+            clear # less退出后清理屏幕
+            return 0
+        else
+            dialog --colors --title "文件错误" --msgbox "${FG_RED}选择的日志文件无法访问或无效:${RESET}\n$selected_log_file" 8 70
+            return 1
+        fi
+    else # 用户按下了 "返回" 或 ESC
+        # 不需要额外提示，直接返回主菜单
+        return 1 
+    fi
 }
 # --- 主菜单循环 ---
 while true; do

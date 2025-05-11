@@ -17,3 +17,15 @@ sudo napcat
 
 
 <img src="./assets/images/main_menu.png" alt="主菜单" width="50%" />
+
+
+## 旧版本CLI兼容
+你只需要在`napcat`后面加上参数,就不会使用TUI而是使用`CLI`命令了,当然为了适配TUI,纯命令`CLI`会**严格执行单例模式**.  
+``` bash
+sudo napcat help
+sudo napcat start {QQ}
+napcat log {QQ}
+```
+  
+
+<img src="./assets/images/old_clis.png" alt="主菜单" width="50%" />
