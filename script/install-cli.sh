@@ -121,10 +121,49 @@ function check_and_install_dependencies() {
         log "依赖 'ffmpeg' 未安装。"
         # On RHEL/CentOS, ffmpeg might be in EPEL or RPM Fusion
         if [[ "$package_manager" == "dnf" ]]; then
-             # Recommend enabling RPM Fusion if ffmpeg is missing
-             log "警告: 'ffmpeg' 可能需要启用 EPEL 或 RPM Fusion 仓库。"
-             log "尝试从标准仓库安装..."
-             missing_deps+=("ffmpeg")
+            log "检测到 dnf 包管理器，尝试从 GitHub 下载预编译的 ffmpeg..."
+            
+            # Create temporary array for ffmpeg handling
+            local temp_missing_deps=()
+            temp_missing_deps+=("ffmpeg")
+            
+            for dep in "${temp_missing_deps[@]}"; do
+                if [[ "$dep" == "ffmpeg" ]]; then
+                    log "从Github发布页下载ffmpeg"
+                    sudo mkdir -p /tmp/ffmpeg_install
+                    local ffmpeg_down_url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
+                    cd /tmp/ffmpeg_install
+                    
+                    # Use proxy if available
+                    local download_url="${target_proxy:+${target_proxy}/}${ffmpeg_down_url}"
+                    log "正在下载: ${download_url}"
+                    
+                    if curl -L -# "${download_url}" -o ffmpeg-master-latest-linux64-gpl.tar.xz; then
+                        log "正在解压并移动到 /opt/ffmpeg"
+                        sudo mv ffmpeg-master-latest-linux64-gpl.tar.xz ffmpeg.tar.xz
+                        sudo mkdir -p /opt
+                        sudo tar -xf ffmpeg.tar.xz -C /opt
+                        sudo mv /opt/ffmpeg-master-latest-linux64-gpl /opt/ffmpeg 2>/dev/null || true
+
+                        log "删除下载包并设置软链接"
+                        sudo rm -f ffmpeg.tar.xz
+                        sudo ln -sf /opt/ffmpeg/bin/ffmpeg /usr/bin/ffmpeg
+                        sudo ln -sf /opt/ffmpeg/bin/ffprobe /usr/bin/ffprobe
+                        
+                        # Clean up
+                        cd /
+                        sudo rm -rf /tmp/ffmpeg_install
+                        
+                        log "ffmpeg 从 GitHub 安装成功。"
+                        break
+                    else
+                        log "错误: ffmpeg 下载失败，将添加到常规安装列表。"
+                        cd /
+                        sudo rm -rf /tmp/ffmpeg_install
+                        missing_deps+=("ffmpeg")
+                    fi
+                fi
+            done
         else
              missing_deps+=("ffmpeg")
         fi
