@@ -1717,7 +1717,7 @@ configure_autostart() {
             --menu "已存在账号 ${BOLD}${FG_CYAN}$other_qq${RESET} 的开机自启动脚本 (${existing_script_name})。\n由于使用共享 PID 文件，不建议同时启用多个。\n请选择操作:" 16 75 3 \
             1 "替换 (禁用 $other_qq, 启用 $qq_account)" \
             2 "取消添加 $qq_account" \
-            3 "强制添加 $qq_account (强烈不推荐!)" \
+            3 "强制添加 $qq_account (强烈不推荐!将导致异常)" \
         2>&1 1>&3)
         local conflict_exit_status=$?
         exec 3>&-
