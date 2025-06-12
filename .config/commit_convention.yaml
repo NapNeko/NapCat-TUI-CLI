@@ -16,3 +16,4 @@ scopes:
   - Config: 配置相关
   - Boot: 启动相关
   - Install: 安装相关
+  - old_cli: 旧版本cli
