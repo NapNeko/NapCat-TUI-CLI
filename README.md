@@ -29,3 +29,24 @@ napcat log {QQ}
   
 
 <img src="./assets/images/old_clis.png" alt="主菜单" width="50%" />
+
+
+---
+
+
+
+## 一些常见问题的解决方案:
+### 1. 执行`napcat`界面显示乱码
+这个问题常出现在docker环境或者全新的系统. 有可能你的终端或者linux环境不支持中文导致的. 对于linux环境问题, 你可以尝试下面的解决方法.
+**解决方法:**
+``` shell
+sudo apt update
+sudo apt install locales
+sudo dpkg-reconfigure locales
+```
+- apt install locales 会安装本地化配置工具包。
+
+- dpkg-reconfigure locales 会弹出交互界面，允许你：
+   1. 勾选 zh_CN.UTF-8 UTF-8（以及其他需要的 UTF‑8 locale），
+   2. 然后选择哪个为系统默认。
+      这个过程依赖于 /etc/locale.gen 中被注释掉的条目和 /etc/default/locale 的实时更新 
