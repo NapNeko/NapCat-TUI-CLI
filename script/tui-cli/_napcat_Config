@@ -137,7 +137,7 @@ configure_http_server() {
             "名称 (*):"     1 1 "$current_name"     1 15 40 0 \
             "Host (*):"     2 1 "$current_host"     2 15 40 0 \
             "Port (*):"     3 1 "$current_port"     3 15 40 0 \
-            "Token:"        4 1 "$current_token"    4 15 40 0 \
+            "Token(*)(13位以上):"    4 1 "$current_token"    4 15 40 0 \
         2>&1 1>&3)
         local form_exit_status=$?
         exec 3>&-
@@ -204,6 +204,10 @@ configure_http_server() {
         [[ -z "$name" ]] && errors+=("名称不能为空")
         [[ -z "$host" ]] && errors+=("Host不能为空")
         [[ -z "$port" ]] && errors+=("Port不能为空")
+        [[ -z "$token" ]] && errors+=("安全考虑，Token不能为空")
+        if [[ -n "$token" ]] && [[ ${#token} -lt 12 ]]; then
+            errors+=("为安全起见，Token 长度不能小于12位")
+        fi
 
         # Host 格式检查
         if [[ -n "$host" ]]; then
@@ -412,7 +416,7 @@ configure_reverse_http_client() {
             --form "请填写以下信息 (带 * 为必填):" 18 70 0 \
             "名称 (*):"     1 1 "$current_name"        1 15 40 0 \
             "Url (*):"      2 1 "$current_url"         2 15 60 0 \
-            "Token:"        3 1 "$current_token"       3 15 40 0 \
+            "Token(*)(13位以上):"    3 1 "$current_token"       3 15 40 0 \
         2>&1 1>&3)
         local form_exit_status=$?
         exec 3>&-
@@ -477,6 +481,10 @@ configure_reverse_http_client() {
         # 必填项检查
         [[ -z "$name" ]] && errors+=("名称不能为空")
         [[ -z "$url" ]] && errors+=("Url不能为空")
+        [[ -z "$token" ]] && errors+=("安全考虑，Token不能为空")
+        if [[ -n "$token" ]] && [[ ${#token} -lt 12 ]]; then
+            errors+=("为安全起见，Token 长度不能小于12位")
+        fi
 
         # Url 格式检查
         # 使用 grep -P 进行 Perl 兼容正则表达式匹配
@@ -661,7 +669,7 @@ configure_ws_server() {
             "Host (*):"         2 1 "$current_host"             2 18 40 0 \
             "Port (*):"         3 1 "$current_port"             3 18 40 0 \
             "心跳间隔(ms)(*):" 4 1 "$current_heart_interval"   4 18 40 0 \
-            "Token:"            5 1 "$current_token"            5 18 40 0 \
+            "Token(*)(13位以上):"        5 1 "$current_token"            5 18 40 0 \
         2>&1 1>&3)
         local form_exit_status=$?
         exec 3>&-
@@ -731,7 +739,10 @@ configure_ws_server() {
         [[ -z "$host" ]] && errors+=("Host不能为空")
         [[ -z "$port" ]] && errors+=("Port不能为空")
         [[ -z "$heart_interval" ]] && errors+=("心跳间隔不能为空")
-
+        [[ -z "$token" ]] && errors+=("安全考虑，Token不能为空")
+        if [[ -n "$token" ]] && [[ ${#token} -lt 12 ]]; then
+            errors+=("为安全起见，Token 长度不能小于12位")
+        fi
         # Host 格式检查
         if [[ -n "$host" ]]; then
             if [[ "$host" == "localhost" ]]; then
@@ -930,7 +941,7 @@ configure_reverse_ws_client() {
             "Url (*):"          2 1 "$current_url"                  2 19 60 0 \
             "心跳间隔(ms)(*):" 3 1 "$current_heart_interval"       3 19 40 0 \
             "重连间隔(ms)(*):" 4 1 "$current_reconnect_interval"   4 19 40 0 \
-            "Token:"            5 1 "$current_token"                5 19 40 0 \
+            "Token(*)(13位以上):"        5 1 "$current_token"                5 19 40 0 \
         2>&1 1>&3)
         local form_exit_status=$?
         exec 3>&-
@@ -999,7 +1010,10 @@ configure_reverse_ws_client() {
         [[ -z "$url" ]] && errors+=("Url不能为空")
         [[ -z "$heart_interval" ]] && errors+=("心跳间隔不能为空")
         [[ -z "$reconnect_interval" ]] && errors+=("重连间隔不能为空")
-
+        [[ -z "$token" ]] && errors+=("安全考虑。Token不能为空")
+        if [[ -n "$token" ]] && [[ ${#token} -lt 12 ]]; then
+            errors+=("为安全起见，Token 长度不能小于12位")
+        fi
         # Url 格式检查
         if [[ -n "$url" ]]; then
              if ! echo "$url" | grep -Pq "$url_regex"; then
@@ -1282,7 +1296,7 @@ configure_webui() {
     # --- 读取当前配置或设置默认值 ---
     local current_host="0.0.0.0"
     local current_port="6099"
-    local current_token="napcat"
+    local current_token=""
     local current_login_rate="5"
     local current_prefix="" # prefix 字段也读取一下，虽然不在表单里，但更新时要保留
 
@@ -1293,7 +1307,7 @@ configure_webui() {
         if [[ -n "$current_config" ]] && [[ "$current_config" != "null" ]]; then
             current_host=$(echo "$current_config" | jq -r '.host // "0.0.0.0"')
             current_port=$(echo "$current_config" | jq -r '.port // "6099"')
-            current_token=$(echo "$current_config" | jq -r '.token // "napcat"')
+            current_token=$(echo "$current_config" | jq -r '.token // ""')
             current_login_rate=$(echo "$current_config" | jq -r '.loginRate // "5"')
             current_prefix=$(echo "$current_config" | jq -r '.prefix // ""')
         fi
@@ -1301,6 +1315,19 @@ configure_webui() {
         # 如果文件不存在，首次配置时提示一下
         dialog --colors --infobox "WebUI 配置文件 '$config_file' 不存在，将使用默认值创建。" 5 60
         sleep 2 # 短暂显示提示
+    fi
+
+    # 如果 token 为空 (文件不存在或文件内 token 为空)，则生成一个随机 token
+    if [[ -z "$current_token" ]]; then
+        current_token=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 32)
+    fi
+
+
+    # 如果检测到历史遗留的弱 Token "napcat"，强制替换
+    if [[ "$current_token" == "napcat" ]]; then
+        dialog --colors --title "安全警告" --infobox "${FG_YELLOW}检测到不安全的默认Token 'napcat'。${RESET}\n\n为了您的安全，将自动为您生成一个新的随机Token。" 8 70
+        sleep 3
+        current_token=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 32)
     fi
 
 
@@ -1313,7 +1340,7 @@ configure_webui() {
             --form "请填写以下信息 (所有项均为必填):" 18 70 0 \
             "Host:"        1 1 "$current_host"        1 15 40 0 \
             "Port:"        2 1 "$current_port"        2 15 40 0 \
-            "Token:"       3 1 "$current_token"       3 15 40 0 \
+            "Token(13位以上):"       3 1 "$current_token"       3 15 40 0 \
             "Login Rate:"  4 1 "$current_login_rate"  4 15 40 0 \
         2>&1 1>&3)
         local form_exit_status=$?
@@ -1339,6 +1366,9 @@ configure_webui() {
         [[ -z "$host" ]] && errors+=("Host 不能为空")
         [[ -z "$port" ]] && errors+=("Port 不能为空")
         [[ -z "$token" ]] && errors+=("Token 不能为空")
+        if [[ -n "$token" ]] && [[ ${#token} -lt 12 ]]; then
+            errors+=("为安全起见，Token 长度不能小于12位")
+        fi
         [[ -z "$login_rate" ]] && errors+=("Login Rate 不能为空")
 
         # Host 格式检查
