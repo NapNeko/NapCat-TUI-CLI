@@ -50,3 +50,11 @@ sudo dpkg-reconfigure locales
    1. 勾选 zh_CN.UTF-8 UTF-8（以及其他需要的 UTF‑8 locale），
    2. 然后选择哪个为系统默认。
       这个过程依赖于 /etc/locale.gen 中被注释掉的条目和 /etc/default/locale 的实时更新 
+
+
+## License
+
+This project is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License. You can view the full license [here](LICENSE).
+根据该License严禁将该仓库用于任何商用目的。
+任何商用产生的利益纠纷与本项目无关。
+![CC BY-NC License](https://licensebuttons.net/l/by-nc/4.0/88x31.png)
