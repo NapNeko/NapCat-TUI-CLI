@@ -293,7 +293,7 @@ check_for_update() {
         latest_tag_numeric=$numeric_tag
     else
         echo "错误：在 ${wait_timeout} 秒内未能从任何源获取远程版本标签。" >&2
-        return -1 # API 查询失败
+        return 2 # API 查询失败
     fi
     # --- 处理结束 ---
 
@@ -304,7 +304,7 @@ check_for_update() {
 
     if [[ ! -f "$local_file" ]] || [[ ! -r "$local_file" ]]; then
         echo "错误：无法读取本地文件 '$local_file'。" >&2
-        return -1 # 无法读取本地文件，视为失败
+        return 2 # 无法读取本地文件，视为失败
     fi
 
     # 尝试提取版本字符串
@@ -313,7 +313,7 @@ check_for_update() {
 
     if [[ -z "$local_version_string" ]]; then
         echo "错误：无法在 '$local_file' 中找到 'const version = \"...\"' 格式的版本号。" >&2
-        return -1 # 无法解析本地版本，视为失败
+        return 2 # 无法解析本地版本，视为失败
     fi
 
     # 去除 v 和 . 只留下数字
@@ -325,7 +325,7 @@ check_for_update() {
     # 确保两者都是数字（或至少看起来像数字）
     if ! [[ "$latest_tag_numeric" =~ ^[0-9]+$ ]] || ! [[ "$local_version_numeric" =~ ^[0-9]+$ ]]; then
          echo "错误：获取到的版本号格式不正确，无法比较。" >&2
-         return -1 # 版本号格式错误
+         return 2 # 版本号格式错误
     fi
 
     # 使用 Bash 算术比较
