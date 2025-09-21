@@ -2,37 +2,22 @@
 
 
 # --- 配置目录 ---
-# 与 _napcat_Config 保持一致
-CONFIG_DIR="/opt/QQ/resources/app/app_launcher/napcat/config"
+TARGET_USER="$USER"
+TARGET_USER_HOME="$HOME"
+
+INSTALL_BASE_DIR="$TARGET_USER_HOME/Napcat"
+RUN_DIR="$INSTALL_BASE_DIR/run"
+LOG_DIR="$INSTALL_BASE_DIR/log"
+QQ_EXECUTABLE="$INSTALL_BASE_DIR/opt/QQ/qq"
+CONFIG_DIR="$INSTALL_BASE_DIR/opt/QQ/resources/app/app_launcher/napcat/config"
+
+
 # 获取当前脚本所在的目录，用于调用 _napcat_Config
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 CONFIG_SCRIPT="$SCRIPT_DIR/_napcat_Config"
 
 
-if [[ $EUID -ne 0 ]]; then
-   # 尝试非交互式 sudo，看是否能直接成功 (例如，已缓存密码或 NOPASSWD)
-   if sudo -n true &> /dev/null; then
-       # 可以非交互式 sudo，直接重新执行 (无提示)
-       sudo "$0" "$@"
-       exit $? # 退出当前非 root 进程, 传递 sudo 的退出码
-   else
-       # 非交互式 sudo 失败，需要密码或权限不足
-       # 现在显示提示信息
-       if command -v dialog &> /dev/null; then
-           # 使用 dialog 提示
-           dialog --colors --title "需要权限" --msgbox "${FG_YELLOW}此脚本需要 root 权限来修改 '${CONFIG_DIR}' 中的文件。\n\n将通过 sudo 请求密码以获取权限。${RESET}" 10 60 2>&1 >/dev/tty
-           clear
-       else
-           # dialog 不可用时的备用 echo 提示
-           echo "提示: 此脚本需要 root 权限才能修改位于 '${CONFIG_DIR}' 的配置文件。" >&2
-           echo "将通过 sudo 请求密码以获取权限..." >&2
-       fi
 
-       # 现在尝试交互式 sudo，这会提示输入密码
-       sudo "$0" "$@"
-       exit $? # 退出当前非 root 进程, 传递 sudo 的退出码
-   fi
-fi
 
 # 检查 dialog 是否安装
 if ! command -v dialog &> /dev/null; then
@@ -112,7 +97,7 @@ get_qq_accounts() {
 # 您需要根据实际情况修改此函数来检查 Napcat 是否正在运行
 # 例如，检查进程名、PID 文件或监听端口
 get_napcat_status() {
-    local pid_file="/var/run/napcat.pid"
+    local pid_file="$RUN_DIR/napcat.pid"
     local pid=""
     local cmdline=""
     local qq_account=""
@@ -121,9 +106,9 @@ get_napcat_status() {
         return 0
     fi
     pid=$(cat "$pid_file")
-    if [[ -z "$pid" ]] || ! sudo kill -0 "$pid" 2>/dev/null; then
+    if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
         echo -e "${FG_YELLOW}未运行😴${RESET}"
-        # sudo rm -f "$pid_file" 2>/dev/null # 可选清理
+        # rm -f "$pid_file" 2>/dev/null # 可选清理
         return 0
     fi
     cmdline=$(ps -o cmd= -p "$pid" 2>/dev/null)
@@ -152,34 +137,36 @@ get_napcat_status() {
 # 函数：执行登录
 start_napcat_login() {
     local qq_account=$1
-    local pid_file="/var/run/napcat.pid"
-    local log_file="/var/log/napcat_${qq_account}.log"
+    local pid_file="$RUN_DIR/napcat.pid"
+    local log_file="$LOG_DIR/napcat_${qq_account}.log"
     local config_file="$CONFIG_DIR/onebot11_${qq_account}.json"
     local existing_pid=""
+
+    mkdir -p "$RUN_DIR" "$LOG_DIR"
 
     # 1. 检查现有进程
     if [[ -f "$pid_file" ]] && [[ -r "$pid_file" ]]; then
         existing_pid=$(cat "$pid_file")
-        if [[ -n "$existing_pid" ]] && sudo kill -0 "$existing_pid" 2>/dev/null; then
+        if [[ -n "$existing_pid" ]] &&  kill -0 "$existing_pid" 2>/dev/null; then
             # 进程存在，询问用户
             dialog --colors --title "进程冲突" --yesno "检测到 Napcat 进程 (PID: ${BOLD}$existing_pid${RESET}) 可能正在运行。\n\n是否终止现有进程并继续启动？" 10 65 2>&1 >/dev/tty # 加粗 PID，调整宽度
             local choice=$?
             clear
             if [[ $choice -eq 0 ]]; then # Yes - 终止进程
                 echo -e "${ANSI_YELLOW}正在尝试终止现有进程 (PID: ${ANSI_BOLD}$existing_pid${ANSI_RESET})${ANSI_YELLOW}...${ANSI_RESET}" # 加粗 PID
-                sudo kill "$existing_pid" 2>/dev/null
+                kill "$existing_pid" 2>/dev/null
                 sleep 2
-                if sudo kill -0 "$existing_pid" 2>/dev/null; then
+                if kill -0 "$existing_pid" 2>/dev/null; then
                     echo -e "${ANSI_RED}无法正常终止进程，尝试强制终止...${ANSI_RESET}"
-                    sudo kill -9 "$existing_pid" 2>/dev/null
+                    kill -9 "$existing_pid" 2>/dev/null
                     sleep 1
-                    if sudo kill -0 "$existing_pid" 2>/dev/null; then
+                    if kill -0 "$existing_pid" 2>/dev/null; then
                          dialog --colors --msgbox "错误：无法终止现有 Napcat 进程 (PID: ${ANSI_BOLD}$existing_pid${ANSI_RESET})。请手动检查并终止。" 8 65 # 加粗 PID，调整宽度
                          return 1 # 无法继续
                     fi
                 fi
                 echo -e "${ANSI_GREEN}现有进程已终止。${ANSI_RESET}"
-                sudo rm -f "$pid_file"
+                rm -f "$pid_file"
             else # No - 取消
                 dialog --colors --msgbox "启动已取消。" 6 40
                 return 1
@@ -188,7 +175,7 @@ start_napcat_login() {
              if [[ -n "$existing_pid" ]]; then
                  echo -e "${ANSI_YELLOW}检测到无效的 PID 文件 (PID: ${ANSI_BOLD}$existing_pid${ANSI_RESET})${ANSI_YELLOW}，已清理。${ANSI_RESET}" # 添加并加粗 PID
              fi
-             sudo rm -f "$pid_file" 2>/dev/null
+             rm -f "$pid_file" 2>/dev/null
         fi
     fi
 
@@ -225,17 +212,15 @@ start_napcat_login() {
 
     # 3. 启动 Napcat
     clear
-    echo -e "${ANSI_GREEN}正在尝试为账号 ${ANSI_BOLD}$qq_account${ANSI_RESET}${ANSI_GREEN} 启动 Napcat...${ANSI_RESET}"
+    echo -e "${ANSI_GREEN}正在尝试为账号 ${ANSI_BOLD}$qq_account${ANSI_RESET}${ANSI_GREEN} (以用户 ${TARGET_USER} 身份) 启动 Napcat...${ANSI_RESET}"
     echo "日志文件: $log_file"
-    # 确保日志目录存在 (如果需要)
-    # sudo mkdir -p /var/log
-    # sudo touch "$log_file"
-    # sudo chown $(whoami) "$log_file" # 确保当前用户可写，如果 sudo 保留了权限
+    
 
-    # 使用 sudo 启动 xvfb-run 和 qq，并将输出重定向到日志文件
-    # 注意：确保 /var/log 目录和该日志文件对于执行 sudo 的用户或 qq 进程是可写的
-    # 可能需要调整权限或使用 sudo sh -c '...' 结构
-    sudo /usr/bin/xvfb-run -a qq --no-sandbox -q "$qq_account" > "$log_file" 2>&1 &
+    # 构建需要以普通用户身份执行的命令
+    local user_command="xvfb-run -a '$QQ_EXECUTABLE' --no-sandbox -q '$qq_account'"
+
+    # 直接以当前用户身份在后台运行
+    bash -c "$user_command" > "$log_file" 2>&1 &
     NAPCAT_PID=$!
 
     # 检查后台命令是否成功启动 (PID 是否大于 0)
@@ -246,8 +231,8 @@ start_napcat_login() {
 
     echo "Napcat 进程 PID: $NAPCAT_PID"
 
-    # 将 PID 写入文件 (使用 sudo tee 保证权限)
-    echo "$NAPCAT_PID" | sudo tee "$pid_file" > /dev/null
+    # 将 PID 写入文件
+    echo "$NAPCAT_PID" > "$pid_file"
     if [[ $? -ne 0 ]]; then
          dialog --colors --msgbox "${FG_YELLOW}警告：无法将 PID 写入 '${BOLD}$pid_file${RESET}${FG_YELLOW}'。请检查权限。${RESET}" 8 65 # 加粗文件名，调整宽度
          # 不一定需要退出，但记录一下
@@ -278,12 +263,12 @@ start_napcat_login() {
         if grep -q "无法重复登录" "$log_file"; then
             dialog --colors --title "登录冲突" --msgbox "${FG_RED}禁止多账户: 您已经登录或者另外一个 Napcat 未关闭。\n请检查并关闭其他 Napcat 实例后重试。${RESET}" 10 70
             # 尝试清理当前启动的进程和PID文件
-            if [[ -n "$NAPCAT_PID" ]] && sudo kill -0 "$NAPCAT_PID" &>/dev/null; then
-                sudo kill "$NAPCAT_PID" &>/dev/null
+            if [[ -n "$NAPCAT_PID" ]] && kill -0 "$NAPCAT_PID" &>/dev/null; then
+                kill "$NAPCAT_PID" &>/dev/null
                 sleep 1
-                sudo kill -9 "$NAPCAT_PID" &>/dev/null # 强制
+                kill -9 "$NAPCAT_PID" &>/dev/null # 强制
             fi
-            sudo rm -f "$pid_file"
+            rm -f "$pid_file"
             return 1 # 返回错误，终止启动
         fi
 

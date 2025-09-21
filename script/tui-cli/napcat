@@ -1,16 +1,25 @@
 #!/bin/bash
 
 # --- 基本配置 ---
-NAPCAT_DIR="/opt/QQ/resources/app/app_launcher/napcat"
-CONFIG_DIR="$NAPCAT_DIR/config" # 与其他脚本保持一致
+# 确定目标用户和其主目录
+TARGET_USER="$USER"
+TARGET_USER_HOME="$HOME"
+
+# 基于目标用户主目录定义路径
+INSTALL_BASE_DIR="$TARGET_USER_HOME/Napcat"
+RUN_DIR="$INSTALL_BASE_DIR/run"
+LOG_DIR="$INSTALL_BASE_DIR/log"
+NAPCAT_DIR="$INSTALL_BASE_DIR/opt/QQ/resources/app/app_launcher/napcat"
+CONFIG_DIR="$NAPCAT_DIR/config"
+
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 BOOT_SCRIPT="$SCRIPT_DIR/_napcat_Boot"
 CONFIG_SCRIPT="$SCRIPT_DIR/_napcat_Config"
-OLD_CLI_SCRIPT="$SCRIPT_DIR/_napcat_old" # 新增：定义旧版 CLI 脚本路径
-API_SCRIPT="$SCRIPT_DIR/api.sh"
-INIT_FLAG="/var/run/NapcatShellinit.flag" # 首次运行标记文件
+OLD_CLI_SCRIPT="$SCRIPT_DIR/_napcat_old"
+INIT_FLAG="$RUN_DIR/napcat_shell.flag" # 首次运行标记文件
 INSTALL_SCRIPT_URL="https://nclatest.znin.net/NapNeko/NapCat-Installer/main/script/install.sh"
 INSTALL_SCRIPT_LOCAL="napcat_install.sh" # 本地安装脚本文件名
+
 
 
 if [[ "$#" -gt 0 ]]; then
@@ -49,23 +58,8 @@ ANSI_MAGENTA='\e[35m'
 ANSI_CYAN='\e[36m'
 ANSI_WHITE='\e[37m'
 
-# --- Root 权限检查 ---
-if [[ $EUID -ne 0 ]]; then
-   if sudo -n true &> /dev/null; then
-       sudo "$0" "$@"
-       exit $?
-   else
-       if command -v dialog &> /dev/null; then
-           dialog --colors --title "需要权限" --msgbox "${FG_YELLOW}此脚本需要 root 权限来执行安装、管理服务和读写系统文件。\n\n将通过 sudo 请求密码以获取权限。${RESET}" 10 70 2>&1 >/dev/tty
-           clear
-       else
-           echo -e "${ANSI_YELLOW}提示: 此脚本需要 root 权限。${ANSI_RESET}" >&2
-           echo "将通过 sudo 请求密码以获取权限..." >&2
-       fi
-       sudo "$0" "$@"
-       exit $?
-   fi
-fi
+# --- Root permission check at the beginning ---
+# The script now runs as a normal user by default.
 
 # --- 依赖检查 (dialog 必须先检查，因为后续提示依赖它) ---
 if ! command -v dialog &> /dev/null; then
@@ -74,11 +68,12 @@ if ! command -v dialog &> /dev/null; then
     exit 1
 fi
 
+mkdir -p "$RUN_DIR" "$LOG_DIR"
 # 支持的系统有ubuntu20+/debian10+、centos7+
 
 # --- Napcat 安装检查 ---
 if [[ ! -d "$NAPCAT_DIR" ]]; then
-    dialog --colors --title "Napcat 未安装" --yesno "检测到 Napcat 可能未安装 (目录 '$NAPCAT_DIR' 不存在)。\n\n是否现在下载并执行官方安装脚本？" 10 70 2>&1 >/dev/tty
+    dialog --colors --title "Napcat 未安装" --yesno "在用户 '${TARGET_USER}' 的目录下未检测到 Napcat ('$NAPCAT_DIR' 不存在)。\n\n是否现在下载并执行官方安装脚本？" 10 70 2>&1 >/dev/tty
     choice=$?
     clear
     if [[ $choice -eq 0 ]]; then # Yes
@@ -219,7 +214,7 @@ if [[ ! -f "$INIT_FLAG" ]]; then
 
     # 所有依赖检查通过，创建标记文件
     dialog --colors --title "设置完成" --infobox "依赖检查通过，创建首次运行标记..." 5 60
-    if echo "1" | sudo tee "$INIT_FLAG" > /dev/null; then
+    if echo "1" > "$INIT_FLAG"; then
         sleep 1
     else
         dialog --colors --title "警告" --msgbox "${FG_YELLOW}无法创建首次运行标记文件 '$INIT_FLAG'。${RESET}\n依赖检查可能会在下次运行时重复执行。" 8 70
@@ -298,7 +293,8 @@ check_for_update() {
     # --- 处理结束 ---
 
     # --- 获取并处理本地版本 ---
-    local local_file="/opt/QQ/resources/app/app_launcher/napcat/napcat.mjs"
+    # --- MODIFIED: Use dynamic path ---
+    local local_file="$INSTALL_BASE_DIR/opt/QQ/resources/app/app_launcher/napcat/napcat.mjs"
     local local_version_string=""
     local local_version_numeric=""
 
@@ -340,10 +336,20 @@ check_for_update() {
 }
 
 
+# 辅助函数：递归获取所有后代 PID
+_get_all_descendant_pids() {
+    local ppid="$1"
+    local children
+    children=$(pgrep -P "$ppid" 2>/dev/null)
+    for child in $children; do
+        echo "$child"
+        _get_all_descendant_pids "$child"
+    done
+}
+
 _get_napcat_pid_and_account() {
-    local pid_file="/var/run/napcat.pid"
+    local pid_file="$RUN_DIR/napcat.pid"
     local pid=""
-    local cmdline=""
     local qq_account=""
 
     if [[ ! -f "$pid_file" ]] || [[ ! -r "$pid_file" ]]; then
@@ -351,32 +357,27 @@ _get_napcat_pid_and_account() {
     fi
 
     pid=$(cat "$pid_file")
-    if [[ -z "$pid" ]] || ! sudo kill -0 "$pid" 2>/dev/null; then
-        # sudo rm -f "$pid_file" 2>/dev/null # 可选清理
+    if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
         return 1 # 未运行
     fi
 
-    # 尝试从主进程命令行获取
-    cmdline=$(ps -o cmd= -p "$pid" 2>/dev/null)
-    if [[ "$cmdline" =~ .*-q[[:space:]]+([0-9]{4,}) ]]; then
-        qq_account="${BASH_REMATCH[1]}"
-        echo "$qq_account" # 输出 QQ 账号
-        return 0 # 运行中
-    fi
+    # 将主 PID 和所有后代 PID 放入一个数组
+    local pids_to_check=("$pid" $(_get_all_descendant_pids "$pid"))
 
-    # 尝试从子进程命令行获取
-    local child_pids=$(pgrep -P "$pid")
-    for child_pid in $child_pids; do
-        child_cmdline=$(ps -o cmd= -p "$child_pid" 2>/dev/null)
-        if [[ "$child_cmdline" =~ qq.*-q[[:space:]]+([0-9]{4,}) ]]; then
-             qq_account="${BASH_REMATCH[1]}"
-             echo "$qq_account" # 输出 QQ 账号
-             return 0 # 运行中
+    # 遍历整个进程树进行检查
+    for current_pid in "${pids_to_check[@]}"; do
+        local cmdline
+        cmdline=$(ps -o cmd= -p "$current_pid" 2>/dev/null)
+        # 使用更宽松的正则表达式，因为它可能在命令行的任何位置
+        if [[ "$cmdline" =~ --no-sandbox[[:space:]]+-q[[:space:]]+([0-9]{4,}) ]]; then
+            qq_account="${BASH_REMATCH[1]}"
+            echo "$qq_account" # 输出 QQ 账号
+            return 0 # 运行中
         fi
     done
 
-    # 如果都找不到
-    echo "$pid" # 输出 PID 供参考
+    # 如果在整个进程树中都找不到
+    echo "$pid" # 输出主 PID 供参考
     return 2 # 状态未知
 }
 
@@ -410,12 +411,12 @@ get_napcat_status() {
 
 
 stop_napcat() {
-    local pid_file="/var/run/napcat.pid"
+    local pid_file="$RUN_DIR/napcat.pid"
     local pid=""
     dialog --colors --title "停止 Napcat" --infobox "正在尝试停止 Napcat..." 5 50
     if [[ -f "$pid_file" ]] && [[ -r "$pid_file" ]]; then
         pid=$(cat "$pid_file")
-        if [[ -n "$pid" ]] && sudo kill -0 "$pid" 2>/dev/null; then
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             echo -e "${ANSI_YELLOW}正在终止进程 PID: $pid...${ANSI_RESET}"
             sudo kill "$pid"
             sleep 2
@@ -476,17 +477,17 @@ view_log() {
 
     if [[ "$status_code" -eq 0 ]]; then
         current_qq_account="$output"
-        current_qq_log_file_path="/var/log/napcat_${current_qq_account}.log"
+        current_qq_log_file_path="$LOG_DIR/napcat_${current_qq_account}.log"
     fi
 
     # 查找所有的napcat日志文件
     local all_log_files=()
     while IFS= read -r -d $'\0' file; do
         all_log_files+=("$file")
-    done < <(find /var/log/ -maxdepth 1 -type f -name "napcat_*.log" -print0)
+    done < <(find "$LOG_DIR/" -maxdepth 1 -type f -name "napcat_*.log" -print0)
 
     if [[ ${#all_log_files[@]} -eq 0 ]]; then
-        dialog --colors --title "日志文件缺失" --msgbox "在 /var/log/ 目录下没有找到 Napcat 日志文件。" 8 60
+        dialog --colors --title "日志文件缺失" --msgbox "在 $LOG_DIR/ 目录下没有找到 Napcat 日志文件。" 8 60
         return 1
     fi
 
