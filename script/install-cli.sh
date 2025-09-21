@@ -29,7 +29,7 @@ function log() {
     esac
 }
 
-# --- Minimal Network Test (Adapted) ---
+#  Minimal Network Test (Adapted) 
 target_proxy="" # Global variable for proxy URL
 
 function network_test() {
@@ -198,7 +198,7 @@ function check_and_install_dependencies() {
     return 0
 }
 
-# --- 主要的安装逻辑 ---
+#  主要的安装逻辑 
 function install_cli_components() {
     log "准备安装/更新 NapCatQQ TUI-CLI 及其组件..."
 
@@ -282,7 +282,7 @@ function install_cli_components() {
     fi
 }
 
-# --- Script Entry Point ---
+#  Script Entry Point 
 # Pass the first argument (proxy number) to the function
 install_cli_components "$1"
 exit $? # Exit with the return code of the function

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# --- 基本配置 ---
+#  基本配置 
 # 确定目标用户和其主目录
 TARGET_USER="$USER"
 TARGET_USER_HOME="$HOME"
@@ -35,7 +35,7 @@ if [[ "$#" -gt 0 ]]; then
 fi
 
 
-# --- Dialog 颜色定义 ---
+#  Dialog 颜色定义 
 RESET='\Zn'
 BOLD='\Zb'
 FG_BLACK='\Z0'
@@ -47,7 +47,7 @@ FG_MAGENTA='\Z5'
 FG_CYAN='\Z6'
 FG_WHITE='\Z7'
 
-# --- ANSI 颜色定义 (用于 echo -e) ---
+#  ANSI 颜色定义 (用于 echo -e) 
 ANSI_RESET='\e[0m'
 ANSI_BOLD='\e[1m'
 ANSI_RED='\e[31m'
@@ -58,10 +58,10 @@ ANSI_MAGENTA='\e[35m'
 ANSI_CYAN='\e[36m'
 ANSI_WHITE='\e[37m'
 
-# --- Root permission check at the beginning ---
+#  Root permission check at the beginning 
 # The script now runs as a normal user by default.
 
-# --- 依赖检查 (dialog 必须先检查，因为后续提示依赖它) ---
+#  依赖检查 (dialog 必须先检查，因为后续提示依赖它) 
 if ! command -v dialog &> /dev/null; then
     echo -e "${ANSI_RED}错误: 核心依赖 'dialog' 未找到！${ANSI_RESET}" >&2
     echo "请先手动安装 dialog (例如: sudo apt install dialog) 再运行此脚本。" >&2
@@ -71,7 +71,7 @@ fi
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 # 支持的系统有ubuntu20+/debian10+、centos7+
 
-# --- Napcat 安装检查 ---
+#  Napcat 安装检查 
 if [[ ! -d "$NAPCAT_DIR" ]]; then
     dialog --colors --title "Napcat 未安装" --yesno "在用户 '${TARGET_USER}' 的目录下未检测到 Napcat ('$NAPCAT_DIR' 不存在)。\n\n是否现在下载并执行官方安装脚本？" 10 70 2>&1 >/dev/tty
     choice=$?
@@ -101,7 +101,7 @@ if [[ ! -d "$NAPCAT_DIR" ]]; then
     fi
 fi
 
-# --- 首次运行依赖检查与安装 ---
+#  首次运行依赖检查与安装 
 if [[ ! -f "$INIT_FLAG" ]]; then
     dialog --colors --title "首次运行设置" --infobox "正在进行首次运行设置，检查所需依赖..." 5 60
     sleep 1
@@ -240,7 +240,7 @@ check_for_update() {
     local original_tag=""
     local numeric_tag=""
 
-    # --- 子函数：获取标签并写入临时文件 (保持不变) ---
+    #  子函数：获取标签并写入临时文件 (保持不变) 
     fetch_and_write() {
         local url="$1"
         local tmp_file="$2"
@@ -261,9 +261,9 @@ check_for_update() {
             # echo "jq failed or returned empty/null for $url" >&2
         fi
     }
-    # --- 子函数结束 ---
+    #  子函数结束 
 
-    # --- 并发获取远程版本 ---
+    #  并发获取远程版本 
     local url
     for url in "${urls[@]}"; do
         fetch_and_write "$url" "$result_file" &
@@ -277,9 +277,9 @@ check_for_update() {
         fi
         sleep 0.1
     done
-    # --- 获取结束 ---
+    #  获取结束 
 
-    # --- 处理远程版本结果 ---
+    #  处理远程版本结果 
     if [[ -s "$result_file" ]]; then
         original_tag=$(head -n 1 "$result_file")
         # 去除 v 和 . 只留下数字
@@ -290,10 +290,10 @@ check_for_update() {
         echo "错误：在 ${wait_timeout} 秒内未能从任何源获取远程版本标签。" >&2
         return 2 # API 查询失败
     fi
-    # --- 处理结束 ---
+    #  处理结束 
 
-    # --- 获取并处理本地版本 ---
-    # --- MODIFIED: Use dynamic path ---
+    #  获取并处理本地版本 
+    #   Use dynamic path 
     local local_file="$INSTALL_BASE_DIR/opt/QQ/resources/app/app_launcher/napcat/napcat.mjs"
     local local_version_string=""
     local local_version_numeric=""
@@ -315,9 +315,9 @@ check_for_update() {
     # 去除 v 和 . 只留下数字
     local_version_numeric="${local_version_string//[v.]/}"
     echo "获取到本地版本的数字标签是: $local_version_numeric"
-    # --- 本地版本处理结束 ---
+    #  本地版本处理结束 
 
-    # --- 版本比较 ---
+    #  版本比较 
     # 确保两者都是数字（或至少看起来像数字）
     if ! [[ "$latest_tag_numeric" =~ ^[0-9]+$ ]] || ! [[ "$local_version_numeric" =~ ^[0-9]+$ ]]; then
          echo "错误：获取到的版本号格式不正确，无法比较。" >&2
@@ -332,7 +332,7 @@ check_for_update() {
         echo "当前已是最新版本或更新 (远程: $original_tag <= 本地: $local_version_string)。"
         return 0 # API 版本小于或等于本地版本
     fi
-    # --- 比较结束 ---
+    #  比较结束 
 }
 
 
@@ -568,7 +568,7 @@ view_log() {
         return 1 
     fi
 }
-# --- 主菜单循环 ---
+#  主菜单循环 
 while true; do
     # 检查更新
     check_for_update

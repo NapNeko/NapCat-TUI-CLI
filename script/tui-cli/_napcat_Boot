@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-# --- 配置目录 ---
+#  配置目录 
 TARGET_USER="$USER"
 TARGET_USER_HOME="$HOME"
 
@@ -35,7 +35,7 @@ fi
 
 
 
-# --- ANSI 颜色定义 (使用 dialog --colors 的简化代码) ---
+#  ANSI 颜色定义 (使用 dialog --colors 的简化代码) 
 # 注意：dialog --colors 使用 \Z 代替 \e[ ，数字代表颜色/属性
 RESET='\Zn'      # 重置为正常
 BOLD='\Zb'       # 切换粗体
@@ -49,7 +49,7 @@ FG_BLUE='\Z4'
 FG_MAGENTA='\Z5'
 FG_CYAN='\Z6'
 FG_WHITE='\Z7'
-# --- ANSI 颜色定义 (用于 echo -e) ---
+#  ANSI 颜色定义 (用于 echo -e) 
 ANSI_RESET='\e[0m'
 ANSI_BOLD='\e[1m'
 ANSI_RED='\e[31m'
@@ -59,7 +59,7 @@ ANSI_BLUE='\e[34m'
 ANSI_MAGENTA='\e[35m'
 ANSI_CYAN='\e[36m'
 ANSI_WHITE='\e[37m'
-# --- 函数定义 ---
+#  函数定义 
 
 # 函数：获取有效的QQ账号列表 (改编自 _napcat_Config)
 get_qq_accounts() {
@@ -342,7 +342,7 @@ start_napcat_login() {
     return 0 # 成功完成（或至少启动并监控了一段时间）
 }
 
-# --- 主逻辑 ---
+#  主逻辑 
 
 while true; do
     NAPCAT_STATUS=$(get_napcat_status)
