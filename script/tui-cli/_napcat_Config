@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# --- ANSI 颜色定义 (用于 echo -e) ---
+#  ANSI 颜色定义 (用于 echo -e) 
 ANSI_RESET='\e[0m'
 ANSI_BOLD='\e[1m'
 ANSI_RED='\e[31m'
@@ -51,7 +51,7 @@ fi
 
 
 
-# --- ANSI 颜色定义 (使用 ANSI-C Quoting) ---
+#  ANSI 颜色定义 (使用 ANSI-C Quoting) 
 RESET='\Zn'      # 重置为正常
 BOLD='\Zb'       # 切换粗体 (效果取决于终端和 dialog --colors 版本)
 
@@ -65,7 +65,7 @@ FG_MAGENTA='\Z5'
 FG_CYAN='\Z6'
 FG_WHITE='\Z7'
 
-# --- 函数定义 ---
+#  函数定义 
 
 
 
@@ -82,7 +82,7 @@ configure_http_server() {
         return 1
     fi
 
-    # --- 读取当前配置或设置默认值 ---
+    #  读取当前配置或设置默认值 
     local mode="create" # 默认为新建模式
     local current_name=""
     local current_host="0.0.0.0"
@@ -114,7 +114,7 @@ configure_http_server() {
     [[ "$mode" == "modify" ]] && title_prefix="${FG_YELLOW}修改${RESET}"
     local form_values
     while true; do
-        # --- 显示表单 ---
+        #  显示表单 
         # 1. 输入框部分
         exec 3>&1
         form_values=$(dialog --colors --clear --backtitle "HTTP 服务端配置" \
@@ -183,7 +183,7 @@ configure_http_server() {
         local cors=false;   [[ "$checklist_choices" == *cors* ]] && cors=true
         local ws=false;     [[ "$checklist_choices" == *websocket* ]] && ws=true
 
-        # --- 输入验证 ---
+        #  输入验证 
         local errors=()
 
         # 必填项检查
@@ -243,7 +243,7 @@ configure_http_server() {
         fi
 
 
-        # --- 处理验证结果 ---
+        #  处理验证结果 
         if [[ ${#errors[@]} -gt 0 ]]; then
             # 错误标题用红色，错误项用黄色
             local error_msg="${FG_RED}输入无效:${RESET}\n\n"
@@ -264,7 +264,7 @@ configure_http_server() {
             continue # 返回循环，重新显示表单
         fi
 
-        # --- 验证通过，构建 JSON 对象 ---
+        #  验证通过，构建 JSON 对象 
         local new_server_obj=$(jq -n \
             --arg name "$name" \
             --arg host "$host" \
@@ -287,7 +287,7 @@ configure_http_server() {
                 debug: $debug
             }')
 
-        # --- 更新 JSON 文件 ---
+        #  更新 JSON 文件 
         local jq_script=""
         local jq_stderr_file=$(mktemp) # 创建一个临时文件来捕获 jq 的 stderr
         # 确保 jq_stderr_file 也在退出时被删除
@@ -367,7 +367,7 @@ configure_reverse_http_client() {
         return 1
     fi
 
-    # --- 读取当前配置或设置默认值 ---
+    #  读取当前配置或设置默认值 
     local mode="create" # 默认为新建模式
     local current_name=""
     local current_url="http://localhost:8080" # 默认 URL
@@ -395,7 +395,7 @@ configure_reverse_http_client() {
     [[ "$mode" == "modify" ]] && title_prefix="${FG_YELLOW}修改${RESET}"
     local form_values
     while true; do
-        # --- 显示表单 ---
+        #  显示表单 
         # 1. 输入框部分
         exec 3>&1
         form_values=$(dialog --colors --clear --backtitle "HTTP 客户端配置" \
@@ -460,7 +460,7 @@ configure_reverse_http_client() {
         local debug=false;  [[ "$checklist_choices" == *debug* ]] && debug=true
         local report_self=false; [[ "$checklist_choices" == *report_self* ]] && report_self=true
 
-        # --- 输入验证 ---
+        #  输入验证 
         local errors=()
         # URL 验证正则表达式 (Perl 兼容)
         local url_regex='\b(([\w-]+://?|www[.])[^\s()<>]+(?:\([\w\d]+\)|([^[:punct:]\s]|/)))'
@@ -507,7 +507,7 @@ configure_reverse_http_client() {
             done
         fi
 
-        # --- 处理验证结果 ---
+        #  处理验证结果 
         if [[ ${#errors[@]} -gt 0 ]]; then
             # 错误标题用红色，错误项用黄色
             local error_msg="${FG_RED}输入无效:${RESET}\n\n"
@@ -526,7 +526,7 @@ configure_reverse_http_client() {
             continue # 返回循环，重新显示表单
         fi
 
-        # --- 验证通过，构建 JSON 对象 ---
+        #  验证通过，构建 JSON 对象 
         local new_client_obj=$(jq -n \
             --arg name "$name" \
             --arg url "$url" \
@@ -545,7 +545,7 @@ configure_reverse_http_client() {
                 debug: $debug
             }')
 
-        # --- 更新 JSON 文件 ---
+        #  更新 JSON 文件 
         local jq_script=""
 
         if [[ "$mode" == "modify" ]]; then
@@ -613,7 +613,7 @@ configure_ws_server() {
         return 1
     fi
 
-    # --- 读取当前配置或设置默认值 ---
+    #  读取当前配置或设置默认值 
     local mode="create" # 默认为新建模式
     local current_name=""
     local current_host="0.0.0.0"
@@ -647,7 +647,7 @@ configure_ws_server() {
     [[ "$mode" == "modify" ]] && title_prefix="${FG_YELLOW}修改${RESET}"
     local form_values
     while true; do
-        # --- 显示表单 ---
+        #  显示表单 
         # 1. 输入框部分
         exec 3>&1
         form_values=$(dialog --colors --clear --backtitle "WebSocket 服务端配置" \
@@ -718,7 +718,7 @@ configure_ws_server() {
         local report_self=false; [[ "$checklist_choices" == *report_self* ]] && report_self=true
         local force_push=false; [[ "$checklist_choices" == *force_push* ]] && force_push=true
 
-        # --- 输入验证 ---
+        #  输入验证 
         local errors=()
         local ipv4_regex='^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$'
 
@@ -781,7 +781,7 @@ configure_ws_server() {
             fi
         fi
 
-        # --- 处理验证结果 ---
+        #  处理验证结果 
         if [[ ${#errors[@]} -gt 0 ]]; then
             local error_msg="${FG_RED}输入无效:${RESET}\n\n"
             for error in "${errors[@]}"; do
@@ -802,7 +802,7 @@ configure_ws_server() {
             continue # 返回循环，重新显示表单
         fi
 
-        # --- 验证通过，构建 JSON 对象 ---
+        #  验证通过，构建 JSON 对象 
         local new_server_obj=$(jq -n \
             --arg name "$name" \
             --arg host "$host" \
@@ -827,7 +827,7 @@ configure_ws_server() {
                 heartInterval: $heart_interval
             }')
 
-        # --- 更新 JSON 文件 ---
+        #  更新 JSON 文件 
         local jq_script=""
 
         if [[ "$mode" == "modify" ]]; then
@@ -888,7 +888,7 @@ configure_reverse_ws_client() {
         return 1
     fi
 
-    # --- 读取当前配置或设置默认值 ---
+    #  读取当前配置或设置默认值 
     local mode="create" # 默认为新建模式
     local current_name=""
     local current_url="ws://localhost:8082" # 默认 URL (根据示例 JSON)
@@ -920,7 +920,7 @@ configure_reverse_ws_client() {
     [[ "$mode" == "modify" ]] && title_prefix="${FG_YELLOW}修改${RESET}"
     local form_values
     while true; do
-        # --- 显示表单 ---
+        #  显示表单 
         # 1. 输入框部分
         exec 3>&1
         form_values=$(dialog --colors --clear --backtitle "WebSocket 客户端配置" \
@@ -989,7 +989,7 @@ configure_reverse_ws_client() {
         local debug=false;  [[ "$checklist_choices" == *debug* ]] && debug=true
         local report_self=false; [[ "$checklist_choices" == *report_self* ]] && report_self=true
 
-        # --- 输入验证 ---
+        #  输入验证 
         local errors=()
         # URL 验证正则表达式 (Perl 兼容) - 稍微修改以更好地匹配 ws/wss
         local url_regex='\b((wss?|https?)://[^\s()<>]+(?:\([\w\d]+\)|([^[:punct:]\s]|/)))'
@@ -1045,7 +1045,7 @@ configure_reverse_ws_client() {
             done
         fi
 
-        # --- 处理验证结果 ---
+        #  处理验证结果 
         if [[ ${#errors[@]} -gt 0 ]]; then
             local error_msg="${FG_RED}输入无效:${RESET}\n\n"
             for error in "${errors[@]}"; do
@@ -1065,7 +1065,7 @@ configure_reverse_ws_client() {
             continue # 返回循环，重新显示表单
         fi
 
-        # --- 验证通过，构建 JSON 对象 ---
+        #  验证通过，构建 JSON 对象 
         local new_client_obj=$(jq -n \
             --arg name "$name" \
             --arg url "$url" \
@@ -1088,7 +1088,7 @@ configure_reverse_ws_client() {
                 reconnectInterval: $reconnect_interval
             }')
 
-        # --- 更新 JSON 文件 ---
+        #  更新 JSON 文件 
         local jq_script=""
 
         if [[ "$mode" == "modify" ]]; then
@@ -1148,7 +1148,7 @@ configure_music_signature() {
         return 1
     fi
 
-    # --- 读取当前配置或设置默认值 ---
+    #  读取当前配置或设置默认值 
     # 注意：这些字段在 JSON 的根级别
     local current_music_url=$(jq -r '.musicSignUrl // ""' "$config_file")
     local current_enable_local_file="on" # 默认开启
@@ -1158,7 +1158,7 @@ configure_music_signature() {
 
     local form_values
     while true; do
-        # --- 显示表单 ---
+        #  显示表单 
         # 1. 输入框部分
         exec 3>&1
         form_values=$(dialog --colors --clear --backtitle "音乐签名配置" \
@@ -1199,7 +1199,7 @@ configure_music_signature() {
         local enable_local=false; [[ "$checklist_choices" == *enable_local* ]] && enable_local=true
         local parse_mult=false;   [[ "$checklist_choices" == *parse_mult* ]] && parse_mult=true
 
-        # --- 输入验证 ---
+        #  输入验证 
         local errors=()
         # URL 验证正则表达式 (Perl 兼容)
         local url_regex='\b(([\w-]+://?|www[.])[^\s()<>]+(?:\([\w\d]+\)|([^[:punct:]\s]|/)))'
@@ -1212,7 +1212,7 @@ configure_music_signature() {
              errors+=("音乐签名地址 '$music_url' 格式不正确")
         fi
 
-        # --- 处理验证结果 ---
+        #  处理验证结果 
         if [[ ${#errors[@]} -gt 0 ]]; then
             # 错误标题用红色，错误项用黄色
             local error_msg="${FG_RED}输入无效:${RESET}\n\n"
@@ -1227,10 +1227,10 @@ configure_music_signature() {
             continue # 返回循环，重新显示表单
         fi
 
-        # --- 验证通过，准备更新 JSON ---
+        #  验证通过，准备更新 JSON 
         # 注意：这里我们直接修改根级别的字段，不需要构建嵌套对象
 
-        # --- 更新 JSON 文件 ---
+        #  更新 JSON 文件 
         # 使用 jq 直接修改根级别字段
         # --argjson 用于传递布尔值
         if jq \
@@ -1284,7 +1284,7 @@ configure_webui() {
     # 确保临时文件和错误文件在退出时被删除
     trap 'rm -f "$temp_file" "$jq_stderr_file"' EXIT
 
-    # --- 读取当前配置或设置默认值 ---
+    #  读取当前配置或设置默认值 
     local current_host="0.0.0.0"
     local current_port="6099"
     local current_token=""
@@ -1324,7 +1324,7 @@ configure_webui() {
 
     local form_values
     while true; do
-        # --- 显示表单 ---
+        #  显示表单 
         exec 3>&1
         form_values=$(dialog --colors --clear --backtitle "WebUI 配置" \
             --title "配置 WebUI" \
@@ -1349,7 +1349,7 @@ configure_webui() {
         local token=$(echo "$form_values" | sed -n '3p')
         local login_rate=$(echo "$form_values" | sed -n '4p')
 
-        # --- 输入验证 ---
+        #  输入验证 
         local errors=()
         local ipv4_regex='^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$'
 
@@ -1403,7 +1403,7 @@ configure_webui() {
             fi
         fi
 
-        # --- 处理验证结果 ---
+        #  处理验证结果 
         if [[ ${#errors[@]} -gt 0 ]]; then
             # 错误标题用红色，错误项用黄色
             local error_msg="${FG_RED}输入无效:${RESET}\n\n"
@@ -1419,7 +1419,7 @@ configure_webui() {
             continue # 返回循环，重新显示表单
         fi
 
-        # --- 验证通过，准备更新 JSON ---
+        #  验证通过，准备更新 JSON 
         # 构建要写入的 JSON 对象，注意 port 和 loginRate 需要是数字
         # 保留未在表单中出现的 prefix 字段
         local new_webui_obj=$(jq -n \
@@ -1437,7 +1437,7 @@ configure_webui() {
             }')
 
 
-        # --- 更新 JSON 文件 ---
+        #  更新 JSON 文件 
         # 直接覆盖整个文件内容
         if echo "$new_webui_obj" | jq '.' > "$temp_file" 2> "$jq_stderr_file"; then
             # 检查写入临时文件是否成功且内容不为空
@@ -1706,7 +1706,7 @@ configure_autostart() {
          return 1
     fi
 
-    # --- 1. 检查当前账号的自启动脚本是否已存在 ---
+    #  1. 检查当前账号的自启动脚本是否已存在 
     # SysVinit 通常通过检查 /etc/rc*.d/ 中的符号链接来判断是否启用，但 update-rc.d 管理更可靠
     # 这里我们简化为检查 init.d 文件是否存在，因为 update-rc.d remove 会删除它
     if [[ -f "$init_script_file" ]]; then
@@ -1730,7 +1730,7 @@ configure_autostart() {
         return 0 # 无论成功与否，处理完毕
     fi
 
-    # --- 2. 检查是否存在其他账号的自启动脚本 ---
+    #  2. 检查是否存在其他账号的自启动脚本 
     # 由于 PID 文件共享，严格来说不允许多个账号同时启用
     local existing_script_file=""
     local other_qq=""
@@ -1798,7 +1798,7 @@ configure_autostart() {
         esac
     fi
 
-    # --- 3. 添加新的自启动脚本 ---
+    #  3. 添加新的自启动脚本 
     echo -e "正在为账号 ${ANSI_BOLD}${ANSI_CYAN}$qq_account${ANSI_RESET} 创建开机自启动脚本..."
 
     # 创建 init.d 脚本内容并直接写入文件
@@ -1923,7 +1923,7 @@ show_service_menu() {
             return # 返回到账号选择菜单
         fi
 
-        # --- 检查各项服务的配置状态和启用状态 ---
+        #  检查各项服务的配置状态和启用状态 
 
         # HTTP Server
         local http_server_config_status="${FG_RED}(未配置)${RESET}"
@@ -2128,7 +2128,7 @@ delete_account() {
     fi
 }
 
-# --- 主逻辑 ---
+#  主逻辑 
 
 # 主循环，显示账号选择菜单 (菜单1)
 while true; do
