@@ -8,63 +8,68 @@ CYAN='\033[0;1;36;96m'
 BLUE='\033[0;1;34;94m'
 NC='\033[0m'
 
-GLOBAL_PID_FILE="/var/run/napcat.pid" # 新的全局 PID 文件
+#  Rootless Path Configuration 
+# Script runs as the current user, so $USER and $HOME are correct.
+TARGET_USER="$USER"
+TARGET_USER_HOME="$HOME"
+
+INSTALL_BASE_DIR="$TARGET_USER_HOME/Napcat"
+RUN_DIR="$INSTALL_BASE_DIR/run"
+LOG_DIR="$INSTALL_BASE_DIR/log"
+QQ_EXECUTABLE="$INSTALL_BASE_DIR/opt/QQ/qq"
+PID_FILE="$RUN_DIR/napcat.pid"
 
 
+# 辅助函数：递归获取所有后代 PID
+_get_all_descendant_pids_old() {
+    local ppid="$1"
+    local children
+    children=$(pgrep -P "$ppid" 2>/dev/null)
+    for child in $children; do
+        echo "$child"
+        _get_all_descendant_pids_old "$child"
+    done
+}
 
-if [[ $EUID -ne 0 ]]; then
-    # 尝试无密码 sudo
-    if sudo -n true &>/dev/null; then
-        exec sudo "$0" "$@"
-    else
-        # 如果无密码 sudo 失败，则提示并请求密码
-        echo -e "\033[0;1;33;93m此脚本需要 root 权限来管理服务和文件。\033[0m" >&2
-        echo "获取权限..." >&2
-        # 重新执行脚本，并传递所有参数
-        exec sudo "$0" "$@"
-    fi
-    exit 1 # sudo 失败时退出
-fi
-
-
-
-# 辅助函数：从全局 PID 文件中的 PID 获取正在运行的 QQ 号
+# 辅助函数：从 PID 文件中的 PID 获取正在运行的 QQ 号
 _get_running_qq_from_global_pid() {
-    local pid_file="$GLOBAL_PID_FILE"
     local pid
-    local cmdline
     local running_qq=""
 
-    if [[ -f "$pid_file" ]] && [[ -r "$pid_file" ]]; then
-        pid=$(cat "$pid_file")
-        if [[ -n "$pid" ]] && sudo kill -0 "$pid" &>/dev/null; then
-            # 尝试从主进程命令行获取
-            cmdline=$(ps -o cmd= -p "$pid" 2>/dev/null)
-            if [[ "$cmdline" =~ .*-q[[:space:]]+([0-9]{4,}) ]]; then
-                running_qq="${BASH_REMATCH[1]}"
-            else
-                # 尝试从子进程命令行获取 (类似 _napcat_Boot/_get_napcat_pid_and_account)
-                local child_pids
-                child_pids=$(pgrep -P "$pid")
-                for child_pid in $child_pids; do
-                    local child_cmdline
-                    child_cmdline=$(ps -o cmd= -p "$child_pid" 2>/dev/null)
-                    if [[ "$child_cmdline" =~ qq.*-q[[:space:]]+([0-9]{4,}) ]]; then
-                         running_qq="${BASH_REMATCH[1]}"
-                         break
-                    fi
-                done
-            fi
-        fi
+    if [[ ! -f "$PID_FILE" ]] || [[ ! -r "$PID_FILE" ]]; then
+        echo ""
+        return
     fi
-    echo "$running_qq"
+
+    pid=$(cat "$PID_FILE")
+    #  No sudo needed to check user's own process 
+    if [[ -z "$pid" ]] || ! kill -0 "$pid" &>/dev/null; then
+        echo ""
+        return
+    fi
+
+    # 将主 PID 和所有后代 PID 放入一个数组
+    local pids_to_check=("$pid" $(_get_all_descendant_pids_old "$pid"))
+
+    # 遍历整个进程树进行检查
+    for current_pid in "${pids_to_check[@]}"; do
+        local cmdline
+        cmdline=$(ps -o cmd= -p "$current_pid" 2>/dev/null)
+        if [[ "$cmdline" =~ --no-sandbox[[:space:]]+-q[[:space:]]+([0-9]{4,}) ]]; then
+            running_qq="${BASH_REMATCH[1]}"
+            echo "$running_qq"
+            return
+        fi
+    done
+
+    echo "" # 如果未找到，返回空
 }
 
 QQ=$2
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-CMD="sudo /usr/bin/xvfb-run -a qq --no-sandbox -q $QQ"
-# 旧的 PID_FILE="/var/run/napcat_$QQ.pid" 不再是主要逻辑依据
-LOG_FILE="/var/log/napcat_$QQ.log" # 日志文件可以保持每个 QQ 一个
+CMD="xvfb-run -a '$QQ_EXECUTABLE' --no-sandbox -q $QQ"
+#  Use new LOG_DIR path 
+LOG_FILE="$LOG_DIR/napcat_$QQ.log"
 
 start() {
     if [ -z "$QQ" ]; then
@@ -75,7 +80,7 @@ start() {
     local running_qq_now
     running_qq_now=$(_get_running_qq_from_global_pid)
     local current_pid_in_file=""
-    [[ -f "$GLOBAL_PID_FILE" ]] && current_pid_in_file=$(cat "$GLOBAL_PID_FILE")
+    [[ -f "$PID_FILE" ]] && current_pid_in_file=$(cat "$PID_FILE")
 
     if [[ -n "$running_qq_now" ]]; then
         if [[ "$running_qq_now" == "$QQ" ]]; then
@@ -86,30 +91,25 @@ start() {
         fi
         exit 1
     else
-        # 清理可能存在的无效的全局 PID 文件
-        if [[ -f "$GLOBAL_PID_FILE" ]]; then
-            echo -e "${YELLOW}发现无效的全局 PID 文件，正在清理...${NC}"
-            sudo rm -f "$GLOBAL_PID_FILE"
+        if [[ -f "$PID_FILE" ]]; then
+            echo -e "${YELLOW}发现无效的 PID 文件，正在清理...${NC}"
+            rm -f "$PID_FILE"
         fi
     fi
 
-    # 配置文件应由新的 _napcat_Config 脚本处理
-    # 移除: cp -f /opt/QQ/resources/app/app_launcher/napcat/config/napcat.json /opt/QQ/resources/app/app_launcher/napcat/config/napcat_$QQ.json
+    #  Ensure user-owned directories exist 
+    mkdir -p "$RUN_DIR" "$LOG_DIR"
 
     echo -e "${MAGENTA}启动 napcat 服务中 QQ: $QQ...${NC}"
-    # 确保日志目录存在 (如果需要)
-    # sudo mkdir -p "$(dirname "$LOG_FILE")"
-    # sudo touch "$LOG_FILE"
-    # sudo chown $(whoami):$(id -g -n $(whoami)) "$LOG_FILE" # 确保当前用户可写
-
-    # 使用 exec 会替换当前 shell 进程，如果脚本还有后续操作，不应使用 exec
-    # $CMD >> "$LOG_FILE" 2>&1 &
-    sudo /usr/bin/xvfb-run -a qq --no-sandbox -q "$QQ" >> "$LOG_FILE" 2>&1 &
+    
+    #  Start process as current user, no sudo needed 
+    bash -c "$CMD" >> "$LOG_FILE" 2>&1 &
     local process_pid=$!
 
     if [[ "$process_pid" -gt 0 ]]; then
-        echo "$process_pid" | sudo tee "$GLOBAL_PID_FILE" > /dev/null
-        echo -e "${GREEN}服务已启动 (PID: $process_pid, QQ: $QQ, PID File: $GLOBAL_PID_FILE)${NC}"
+        #  Write to user-owned PID file, no sudo needed 
+        echo "$process_pid" > "$PID_FILE"
+        echo -e "${GREEN}服务已启动 (PID: $process_pid, QQ: $QQ, PID File: $PID_FILE)${NC}"
     else
         echo -e "${RED}启动服务失败，未能获取 PID。${NC}"
         exit 1
@@ -119,67 +119,66 @@ start() {
 stop() {
     local running_qq_now
     running_qq_now=$(_get_running_qq_from_global_pid)
-    local current_pid_in_global_file=""
-    [[ -f "$GLOBAL_PID_FILE" ]] && current_pid_in_global_file=$(cat "$GLOBAL_PID_FILE")
+    local current_pid_in_file=""
+    [[ -f "$PID_FILE" ]] && current_pid_in_file=$(cat "$PID_FILE")
 
-    if [ -z "$QQ" ]; then # 如果没有指定 QQ，则停止全局 PID 文件中记录的进程
-        if [[ -n "$running_qq_now" ]] && [[ -n "$current_pid_in_global_file" ]]; then
-            echo -e "${MAGENTA}停止 napcat 服务 (PID: $current_pid_in_global_file, QQ: $running_qq_now)...${NC}"
-            local log_to_remove="/var/log/napcat_${running_qq_now}.log"
-            # 尝试正常终止，然后强制
-            if sudo kill "$current_pid_in_global_file" 2>/dev/null; then
+    if [ -z "$QQ" ]; then # 如果没有指定 QQ，则停止 PID 文件中记录的进程
+        if [[ -n "$running_qq_now" ]] && [[ -n "$current_pid_in_file" ]]; then
+            echo -e "${MAGENTA}停止 napcat 服务 (PID: $current_pid_in_file, QQ: $running_qq_now)...${NC}"
+            local log_to_remove="$LOG_DIR/napcat_${running_qq_now}.log"
+            
+            #  No sudo needed to kill/check user's own process 
+            if kill "$current_pid_in_file" 2>/dev/null; then
                 sleep 2
             fi
-            if sudo kill -0 "$current_pid_in_global_file" 2>/dev/null; then # 检查是否仍在运行
-                 echo -e "${YELLOW}正常终止失败，尝试强制终止 (PID: $current_pid_in_global_file)...${NC}"
-                 sudo kill -9 "$current_pid_in_global_file" 2>/dev/null
+            if kill -0 "$current_pid_in_file" 2>/dev/null; then
+                 echo -e "${YELLOW}正常终止失败，尝试强制终止 (PID: $current_pid_in_file)...${NC}"
+                 kill -9 "$current_pid_in_file" 2>/dev/null
                  sleep 1
             fi
 
-            if ! sudo kill -0 "$current_pid_in_global_file" 2>/dev/null; then # 确认已停止
-                sudo rm -f "$GLOBAL_PID_FILE"
-                sudo rm -f "$log_to_remove" # 删除对应QQ的日志
+            if ! kill -0 "$current_pid_in_file" 2>/dev/null; then
+                rm -f "$PID_FILE"
+                rm -f "$log_to_remove"
                 echo -e "${RED}服务已停止 (QQ: $running_qq_now)${NC}"
             else
-                echo -e "${RED}无法停止服务 (PID: $current_pid_in_global_file)。请手动检查。${NC}"
+                echo -e "${RED}无法停止服务 (PID: $current_pid_in_file)。请手动检查。${NC}"
             fi
         else
-            echo -e "${GREEN}没有 Napcat 服务正在运行 (根据 $GLOBAL_PID_FILE)${NC}"
-            [[ -f "$GLOBAL_PID_FILE" ]] && sudo rm -f "$GLOBAL_PID_FILE" # 清理无效的全局PID文件
+            echo -e "${GREEN}没有 Napcat 服务正在运行 (根据 $PID_FILE)${NC}"
+            [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
         fi
         return 0
     fi
 
     # 如果指定了 QQ 号
-    # LOG_FILE 变量此时是 /var/log/napcat_$QQ.log (针对目标QQ)
-    if [[ -n "$running_qq_now" ]] && [[ -n "$current_pid_in_global_file" ]]; then
+    if [[ -n "$running_qq_now" ]] && [[ -n "$current_pid_in_file" ]]; then
         if [[ "$running_qq_now" == "$QQ" ]]; then
-            echo -e "${MAGENTA}停止 napcat 服务中 QQ: $QQ (PID: $current_pid_in_global_file)...${NC}"
-            if sudo kill "$current_pid_in_global_file" 2>/dev/null; then
+            echo -e "${MAGENTA}停止 napcat 服务中 QQ: $QQ (PID: $current_pid_in_file)...${NC}"
+            #  No sudo needed 
+            if kill "$current_pid_in_file" 2>/dev/null; then
                 sleep 2
             fi
-            if sudo kill -0 "$current_pid_in_global_file" 2>/dev/null; then
-                 echo -e "${YELLOW}正常终止失败，尝试强制终止 (PID: $current_pid_in_global_file)...${NC}"
-                 sudo kill -9 "$current_pid_in_global_file" 2>/dev/null
+            if kill -0 "$current_pid_in_file" 2>/dev/null; then
+                 echo -e "${YELLOW}正常终止失败，尝试强制终止 (PID: $current_pid_in_file)...${NC}"
+                 kill -9 "$current_pid_in_file" 2>/dev/null
                  sleep 1
             fi
 
-            if ! sudo kill -0 "$current_pid_in_global_file" 2>/dev/null; then
-                sudo rm -f "$GLOBAL_PID_FILE"
-                sudo rm -f "$LOG_FILE" # 删除指定QQ的日志
+            if ! kill -0 "$current_pid_in_file" 2>/dev/null; then
+                rm -f "$PID_FILE"
+                rm -f "$LOG_FILE"
                 echo -e "${RED}服务已停止 (QQ: $QQ)${NC}"
             else
-                echo -e "${RED}无法停止服务 (PID: $current_pid_in_global_file, QQ: $QQ)。请手动检查。${NC}"
+                echo -e "${RED}无法停止服务 (PID: $current_pid_in_file, QQ: $QQ)。请手动检查。${NC}"
             fi
         else
-            echo -e "${YELLOW}正在运行的服务是为 QQ ${running_qq_now} (PID $current_pid_in_global_file), 而不是请求的 QQ $QQ.${NC}"
+            echo -e "${YELLOW}正在运行的服务是为 QQ ${running_qq_now} (PID $current_pid_in_file), 而不是请求的 QQ $QQ.${NC}"
             echo -e "${GREEN}服务 (QQ: $running_qq_now) 未停止.${NC}"
         fi
     else
-        echo -e "${GREEN}服务未运行 (或 PID 文件 $GLOBAL_PID_FILE 无效/不存在) 来停止 QQ $QQ.${NC}"
-        # 可以考虑清理指定QQ的日志文件，但需谨慎
-        # sudo rm -f "$LOG_FILE"
-        [[ -f "$GLOBAL_PID_FILE" ]] && sudo rm -f "$GLOBAL_PID_FILE" # 清理无效的全局PID文件
+        echo -e "${GREEN}服务未运行 (或 PID 文件 $PID_FILE 无效/不存在) 来停止 QQ $QQ.${NC}"
+        [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
     fi
 }
 
@@ -190,38 +189,36 @@ restart() {
     fi
 
     echo -e "${MAGENTA}重启 napcat 服务中 QQ: $QQ...${NC}"
-    # stop 函数现在会处理基于全局PID的停止，如果QQ匹配或未指定QQ
-    # 如果 stop 带有QQ参数，它会检查当前运行的QQ是否匹配
-    local original_qq_for_stop=$QQ # 保存一下，因为stop内部可能会修改QQ变量（旧版逻辑）
-    QQ=$original_qq_for_stop stop # 调用stop，它会检查全局PID
-    QQ=$original_qq_for_stop # 恢复QQ变量
+    local original_qq_for_stop=$QQ
+    QQ=$original_qq_for_stop stop
+    QQ=$original_qq_for_stop
     sleep 2
-    start # start 会检查全局PID，如果已空则启动
+    start
 }
 
 status() {
     local running_qq_now
     running_qq_now=$(_get_running_qq_from_global_pid)
-    local current_pid_in_global_file=""
-    [[ -f "$GLOBAL_PID_FILE" ]] && current_pid_in_global_file=$(cat "$GLOBAL_PID_FILE")
+    local current_pid_in_file=""
+    [[ -f "$PID_FILE" ]] && current_pid_in_file=$(cat "$PID_FILE")
 
-    if [ -z "$QQ" ]; then # 查看所有/全局状态
-        if [[ -n "$running_qq_now" ]] && [[ -n "$current_pid_in_global_file" ]]; then
-            echo -e "${GREEN}Napcat 服务运行中: QQ $running_qq_now (PID: $current_pid_in_global_file, PID File: $GLOBAL_PID_FILE)${NC}"
+    if [ -z "$QQ" ]; then
+        if [[ -n "$running_qq_now" ]] && [[ -n "$current_pid_in_file" ]]; then
+            echo -e "${GREEN}Napcat 服务运行中: QQ $running_qq_now (PID: $current_pid_in_file, PID File: $PID_FILE)${NC}"
         else
-            echo -e "${RED}没有 Napcat 服务正在运行 (根据 $GLOBAL_PID_FILE)${NC}"
-            [[ -f "$GLOBAL_PID_FILE" ]] && sudo rm -f "$GLOBAL_PID_FILE" # 清理无效的全局PID文件
+            echo -e "${RED}没有 Napcat 服务正在运行 (根据 $PID_FILE)${NC}"
+            [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
         fi
-    else # 查看指定 QQ 的状态
-        if [[ -n "$running_qq_now" ]] && [[ -n "$current_pid_in_global_file" ]]; then
+    else
+        if [[ -n "$running_qq_now" ]] && [[ -n "$current_pid_in_file" ]]; then
             if [[ "$running_qq_now" == "$QQ" ]]; then
-                echo -e "${GREEN}服务运行中 QQ: $QQ (PID: $current_pid_in_global_file, PID File: $GLOBAL_PID_FILE)${NC}"
+                echo -e "${GREEN}服务运行中 QQ: $QQ (PID: $current_pid_in_file, PID File: $PID_FILE)${NC}"
             else
-                echo -e "${RED}服务未针对 QQ $QQ 运行. 当前运行的是 QQ $running_qq_now (PID: $current_pid_in_global_file, PID File: $GLOBAL_PID_FILE)${NC}"
+                echo -e "${RED}服务未针对 QQ $QQ 运行. 当前运行的是 QQ $running_qq_now (PID: $current_pid_in_file, PID File: $PID_FILE)${NC}"
             fi
         else
-            echo -e "${RED}服务未运行 QQ: $QQ (根据 $GLOBAL_PID_FILE)${NC}"
-            [[ -f "$GLOBAL_PID_FILE" ]] && sudo rm -f "$GLOBAL_PID_FILE" # 清理无效的全局PID文件
+            echo -e "${RED}服务未运行 QQ: $QQ (根据 $PID_FILE)${NC}"
+            [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
         fi
     fi
 }
@@ -231,7 +228,6 @@ log() {
         echo -e "${RED}请传入QQ号,如${NC}${GREEN} $0 log 3116556127${NC}"
         exit 1
     fi
-    # LOG_FILE 变量已经是 /var/log/napcat_$QQ.log
     if [ -f "$LOG_FILE" ]; then
         tail -n 50 "$LOG_FILE"
         echo -e "${YELLOW}正在实时监控日志 (按 Ctrl+C 退出)...${NC}"
@@ -247,26 +243,21 @@ startup() {
         exit 1
     fi
 
-    local init_script_path="/etc/init.d/nc_${QQ}"
-    
-    # --- 1. 检查当前账号的自启动脚本是否已存在 ---
-    if [ -f "$init_script_path" ]; then
-        echo -e "${GREEN}已存在QQ ${QQ} 的开机自启动服务: $init_script_path${NC}"
-        echo -e "${YELLOW}是否要重新配置该账号的开机自启动？ (y/N)${NC}"
-        read -p "请选择: " choice
-        case "$choice" in
-            [Yy]|[Yy][Ee][Ss])
-                echo -e "${YELLOW}正在重新配置...${NC}"
-                # 继续执行下面的脚本创建逻辑
-                ;;
-            *)
-                echo -e "${GREEN}保留现有自启动配置。${NC}"
-                exit 0
-                ;;
-        esac
+    echo -e "${YELLOW}配置开机自启动需要 root 权限...${NC}"
+    if ! sudo -v; then
+        echo -e "${RED}无法获取 sudo 权限，操作已取消。${NC}"
+        exit 1
     fi
 
-    # --- 2. 检查是否存在其他账号的自启动脚本 ---
+    local init_script_path="/etc/init.d/nc_${QQ}"
+    
+    if sudo test -f "$init_script_path"; then
+        echo -e "${GREEN}已存在QQ ${QQ} 的开机自启动服务: $init_script_path${NC}"
+        read -p "是否要重新配置？ (y/N): " choice
+        [[ ! "$choice" =~ ^[Yy]$ ]] && echo -e "${GREEN}操作取消。${NC}" && exit 0
+    fi
+
+    #  2. 检查是否存在其他账号的自启动脚本 
     local existing_script_file=""
     local other_qq=""
     
@@ -322,10 +313,10 @@ startup() {
         esac
     fi
 
-    # --- 3. 添加新的自启动脚本 ---
     echo -e "${MAGENTA}正在为账号 $QQ 创建开机自启动脚本...${NC}"
 
-cat <<EOF > "/etc/init.d/nc_${QQ}"
+    #  Generated script uses rootless paths and sudo -u 
+    sudo tee "$init_script_path" > /dev/null <<EOF
 #!/bin/bash
 ### BEGIN INIT INFO
 # Provides:          nc_${QQ}
@@ -334,24 +325,41 @@ cat <<EOF > "/etc/init.d/nc_${QQ}"
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
 # Short-Description: Manage nc_${QQ} service
-# Description:       Start of nc_${QQ} service.
+# Description:       Start of nc_${QQ} service as user ${TARGET_USER}.
 ### END INIT INFO
 
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:bin:/usr/sbin:/usr/bin
-CMD="sudo /usr/bin/xvfb-run -a qq --no-sandbox -q ${QQ}"
-PID_FILE="/var/run/napcat.pid"
-LOG_FILE="/var/log/napcat_${QQ}.log"
+CMD="xvfb-run -a '${QQ_EXECUTABLE}' --no-sandbox -q ${QQ}"
+PID_FILE="${PID_FILE}"
+LOG_FILE="${LOG_FILE}"
+RUN_AS_USER="${TARGET_USER}"
 
 start() {
-    touch "\$PID_FILE"
-    exec \$CMD >> "\$LOG_FILE" 2>&1 &
-    echo \$! > "\$PID_FILE"
-    echo "nc sucess"
+    echo "Starting NapCat for QQ ${QQ} as user \$RUN_AS_USER..."
+    mkdir -p "\$(dirname "\$LOG_FILE")" "\$(dirname "\$PID_FILE")"
+    chown "\$RUN_AS_USER" "\$(dirname "\$LOG_FILE")" "\$(dirname "\$PID_FILE")"
+    touch "\$LOG_FILE"
+    chown "\$RUN_AS_USER" "\$LOG_FILE"
+    
+    sudo -u "\$RUN_AS_USER" -H bash -c "nohup \$CMD >> \"\$LOG_FILE\" 2>&1 & echo \$! > \"\$PID_FILE\""
+    echo "NapCat service started."
+}
+
+stop() {
+    echo "Stopping NapCat service..."
+    if [ -f "\$PID_FILE" ]; then
+        kill \$(cat "\$PID_FILE")
+        rm -f "\$PID_FILE"
+    fi
+    echo "NapCat service stopped."
 }
 
 case "\$1" in
     start)
         start
+        ;;
+    stop)
+        stop
         ;;
     *)
         exit 1
@@ -365,9 +373,6 @@ EOF
     if command -v update-rc.d &> /dev/null; then
         sudo update-rc.d "nc_${QQ}" defaults
         echo -e "${MAGENTA}已添加QQ ${QQ} 的开机自启动服务 (SysVinit).${NC}"
-    elif command -v systemctl &> /dev/null; then
-        echo -e "${YELLOW}检测到 systemd，但此脚本创建的是 SysVinit 服务。你可能需要手动创建 systemd service unit。${NC}"
-        echo -e "${MAGENTA}SysVinit 服务脚本已创建于 ${init_script_path}，某些系统可能会兼容运行它。${NC}"
     else
         echo -e "${YELLOW}未知的 init 系统，无法自动配置开机启动。脚本已创建于 ${init_script_path}${NC}"
     fi
@@ -379,27 +384,29 @@ startdown() {
         exit 1
     fi
 
+    echo -e "${YELLOW}取消开机自启动需要 root 权限...${NC}"
+    if ! sudo -v; then
+        echo -e "${RED}无法获取 sudo 权限，操作已取消。${NC}"
+        exit 1
+    fi
+
     local init_script_path="/etc/init.d/nc_${QQ}"
-    if [ ! -f "$init_script_path" ]; then
+    if ! sudo test -f "$init_script_path"; then
         echo -e "${RED}不存在QQ ${QQ} 的开机自启动服务: $init_script_path${NC}"
         exit 1
     fi
 
     if command -v update-rc.d &> /dev/null; then
         sudo update-rc.d "nc_${QQ}" remove
-    elif command -v systemctl &> /dev/null && sudo systemctl list-unit-files | grep -q "nc_${QQ}.service"; then
-        # 如果之前被 systemd 兼容运行了
-        sudo systemctl disable "nc_${QQ}.service" &>/dev/null
     fi
     sudo rm -f "$init_script_path"
     echo -e "${MAGENTA}已取消QQ ${QQ} 的开机自启动服务.${NC}"
 }
 
 update() {
-    # 停止当前运行的任何实例 (不带QQ号，会停止全局PID中的进程)
-    local current_qq_for_stop="" # 传递空QQ给stop，让它处理全局PID
+    local current_qq_for_stop=""
     QQ=$current_qq_for_stop stop
-    echo -e "${YELLOW}正在执行更新脚本...${NC}"
+    echo -e "${YELLOW}正在执行更新脚本 (需要 sudo)...${NC}"
     curl -sSL https://nclatest.znin.net/NapNeko/NapCat-Installer/main/script/install.sh | sudo bash -s -- --docker n --cli y
     echo -e "${GREEN}更新完成。如果之前有服务运行，请重新启动。${NC}"
 }
@@ -407,50 +414,38 @@ update() {
 rebuild() {
     local current_qq_for_stop=""
     QQ=$current_qq_for_stop stop
-    echo -e "${YELLOW}正在执行强制重建脚本...${NC}"
+    echo -e "${YELLOW}正在执行强制重建脚本 (需要 sudo)...${NC}"
     curl -sSL https://nclatest.znin.net/NapNeko/NapCat-Installer/main/script/install.sh | sudo bash -s -- --docker n --cli y --force
     echo -e "${GREEN}强制重建完成。如果之前有服务运行，请重新启动。${NC}"
 }
 
+#  REWRITTEN: remove function for rootless 
 remove() {
     local current_qq_for_stop=""
     QQ=$current_qq_for_stop stop # 停止任何正在运行的实例
 
-    # 取消所有可能的自启动
-    echo -e "${YELLOW}正在尝试移除所有 nc_QQ 开机自启动项...${NC}"
-    for old_init_script in /etc/init.d/nc_*; do
-        if [ -f "$old_init_script" ]; then
-            local old_qq_num=$(basename "$old_init_script" | sed 's/nc_//')
-            echo "Removing startup for QQ $old_qq_num..."
-            if command -v update-rc.d &> /dev/null; then
-                sudo update-rc.d "nc_${old_qq_num}" remove &>/dev/null
+    echo -e "${YELLOW}正在尝试移除所有 nc_QQ 开机自启动项 (需要 sudo)...${NC}"
+    if sudo -v; then
+        for old_init_script in /etc/init.d/nc_*; do
+            if sudo test -f "$old_init_script"; then
+                local old_qq_num=$(basename "$old_init_script" | sed 's/nc_//')
+                echo "Removing startup for QQ $old_qq_num..."
+                if command -v update-rc.d &> /dev/null; then
+                    sudo update-rc.d "nc_${old_qq_num}" remove &>/dev/null
+                fi
+                sudo rm -f "$old_init_script"
             fi
-            sudo rm -f "$old_init_script"
-        fi
-    done
-
-    echo -e "${YELLOW}正在卸载 linuxqq 软件包...${NC}"
-    if command -v apt &> /dev/null; then
-        sudo apt remove --purge linuxqq -y
-    elif command -v yum &> /dev/null; then
-        sudo yum remove linuxqq -y
-    elif command -v dnf &> /dev/null; then
-        sudo dnf remove linuxqq -y
-    fi
-    # 确保彻底移除 (某些系统可能 dpkg/rpm 更有效)
-    if command -v dpkg &> /dev/null; then
-        sudo dpkg -P linuxqq &>/dev/null
-    elif command -v rpm &> /dev/null; then
-        sudo rpm -e --nodeps linuxqq &>/dev/null
+        done
+    else
+        echo -e "${RED}无法获取 sudo 权限，跳过移除开机自启动项。${NC}"
     fi
 
-    echo -e "${YELLOW}正在删除相关目录和文件...${NC}"
-    sudo rm -rf /opt/QQ
-    sudo rm -rf "$HOME/.config/QQ" # 用户配置
-    sudo rm -rf "/root/.config/QQ" # root的配置 (如果以root运行过)
-    sudo rm -f /usr/local/bin/napcat # 如果有旧的符号链接
-    sudo rm -f "$GLOBAL_PID_FILE" # 清理全局PID文件
-    sudo rm -f /var/log/napcat_*.log # 清理所有日志
+    echo -e "${YELLOW}正在删除用户 ${TARGET_USER} 的 Napcat 相关目录和文件...${NC}"
+    rm -rf "$INSTALL_BASE_DIR"
+    rm -rf "$TARGET_USER_HOME/.config/QQ"
+
+    echo -e "${YELLOW}正在清理 CLI 脚本 (需要 sudo)...${NC}"
+    sudo rm -f /usr/local/bin/napcat /usr/local/bin/_napcat*
 
     echo -e "${GREEN}卸载完成。${NC}"
     echo -e "${MAGENTA}江${RED}湖${GREEN}不${CYAN}散，${MAGENTA}有${RED}缘${GREEN}再${CYAN}见。${NC}"
@@ -458,7 +453,7 @@ remove() {
 
 help() {
     clear
-    echo -e " ${MAGENTA}┌${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}──${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}──${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}──${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}──${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}──${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}${RED}─┐${NC}"
+    echo -e " ${MAGENTA}┌${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}──${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}──${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}──${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}──${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}──${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}──${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}──${RED}──${YELLOW}──${GREEN}──${CYAN}──${BLUE}──${MAGENTA}${RED}─┐${NC}"
     echo -e " ${MAGENTA}│${RED}  ${YELLOW}  ${GREEN}  ${CYAN}  ${BLUE}  ${MAGENTA}  ${RED}  ${YELLOW}  ${GREEN}  ${CYAN}  ${BLUE}  ${MAGENTA}  ${RED}  ${YELLOW}  ${GREEN}  ${CYAN}  ${BLUE}  ${MAGENTA}  ${RED}  ${YELLOW}  ${GREEN}  ${CYAN}  ${BLUE}  ${MAGENTA}  ${RED}  ${YELLOW}  ${GREEN}  ${CYAN}  ${BLUE}  ${MAGENTA}  ${RED}  ${YELLOW}  ${GREEN}  ${CYAN}  ${BLUE}  ${MAGENTA} ${RED}│${NC}"
     echo -e " ${RED}│${YELLOW}██${GREEN}█╗${CYAN}  ${BLUE} █${MAGENTA}█╗${RED}  ${YELLOW}  ${GREEN} █${CYAN}██${BLUE}██${MAGENTA}╗ ${RED}  ${YELLOW}  ${GREEN}██${CYAN}██${BLUE}██${MAGENTA}╗ ${RED}  ${YELLOW}  ${GREEN} █${CYAN}██${BLUE}██${MAGENTA}█╗${RED}  ${YELLOW}  ${GREEN} █${CYAN}██${BLUE}██${MAGENTA}╗ ${RED}  ${YELLOW}  ${GREEN}██${CYAN}██${BLUE}██${MAGENTA}██${RED}╗${YELLOW}│${NC}"
     echo -e " ${YELLOW}│${GREEN}██${CYAN}██${BLUE}╗ ${MAGENTA} █${RED}█║${YELLOW}  ${GREEN}  ${CYAN}██${BLUE}╔═${MAGENTA}═█${RED}█╗${YELLOW}  ${GREEN}  ${CYAN}██${BLUE}╔═${MAGENTA}═█${RED}█╗${YELLOW}  ${GREEN}  ${CYAN}██${BLUE}╔═${MAGENTA}══${RED}═╝${YELLOW}  ${GREEN}  ${CYAN}██${BLUE}╔═${MAGENTA}═█${RED}█╗${YELLOW}  ${GREEN}  ${CYAN}╚═${BLUE}═█${MAGENTA}█╔${RED}══${YELLOW}╝${YELLOW}│${NC}"
@@ -489,15 +484,15 @@ help() {
     echo -e " ${GREEN}   napcat oldhelp                        ${MAGENTA}查看旧版手动命令提示${NC}"
 }
 
+#  oldhelp for rootless 
 oldhelp() {
-    echo -e "旧版手动命令提示 (可能与当前TUI管理方式不完全兼容):"
-    echo -e "直接启动 (前台): ${GREEN} sudo /usr/bin/xvfb-run -a qq --no-sandbox -q QQ号码 ${NC}"
-    echo -e "使用 screen 后台运行: ${GREEN} screen -dmS napcat sudo /usr/bin/xvfb-run -a qq --no-sandbox -q QQ号码 ${NC}"
+    echo -e "手动命令提示:"
+    echo -e "直接启动 (前台): ${GREEN} xvfb-run -a ~/Napcat/opt/QQ/qq --no-sandbox -q QQ号码 ${NC}"
+    echo -e "使用 screen 后台运行: ${GREEN} screen -dmS napcat xvfb-run -a ~/Napcat/opt/QQ/qq --no-sandbox -q QQ号码 ${NC}"
     echo -e "连接到 screen 会话: ${GREEN} screen -r napcat ${NC} (使用 Ctrl+A 然后 D 分离)"
     echo -e "停止 screen 会话: ${GREEN} screen -S napcat -X quit ${NC}"
 }
 
-# 主逻辑 case 语句保持不变，调用更新后的函数
 case "$1" in
     start)
         start

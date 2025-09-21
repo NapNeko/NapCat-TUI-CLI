@@ -11,35 +11,21 @@ ANSI_MAGENTA='\e[35m'
 ANSI_CYAN='\e[36m'
 ANSI_WHITE='\e[37m'
 
-CONFIG_DIR="/opt/QQ/resources/app/app_launcher/napcat/config"
+# Dynamic Path Configuration
+TARGET_USER="$USER"
+TARGET_USER_HOME="$HOME"
+
+INSTALL_BASE_DIR="$TARGET_USER_HOME/Napcat"
+QQ_EXECUTABLE="$INSTALL_BASE_DIR/opt/QQ/qq"
+CONFIG_DIR="$INSTALL_BASE_DIR/opt/QQ/resources/app/app_launcher/napcat/config"
 BASE_NAPCAT_CONFIG="$CONFIG_DIR/napcat.json"
 BASE_ONEBOT_CONFIG="$CONFIG_DIR/onebot11.json"
 
-# --- Root 权限检查 ---
-if [[ $EUID -ne 0 ]]; then
-   # 尝试非交互式 sudo，看是否能直接成功 (例如，已缓存密码或 NOPASSWD)
-   if sudo -n true &> /dev/null; then
-       # 可以非交互式 sudo，直接重新执行 (无提示)
-       sudo "$0" "$@"
-       exit $? # 退出当前非 root 进程, 传递 sudo 的退出码
-   else
-       # 非交互式 sudo 失败，需要密码或权限不足
-       # 现在显示提示信息
-       if command -v dialog &> /dev/null; then
-           # 使用 dialog 提示
-           dialog --colors --title "需要权限" --msgbox "${FG_YELLOW}此脚本需要 root 权限来修改 '${CONFIG_DIR}' 中的文件。\n\n将通过 sudo 请求密码以获取权限。${RESET}" 10 60 2>&1 >/dev/tty
-           clear
-       else
-           # dialog 不可用时的备用 echo 提示
-           echo "提示: 此脚本需要 root 权限才能修改位于 '${CONFIG_DIR}' 的配置文件。" >&2
-           echo "将通过 sudo 请求密码以获取权限..." >&2
-       fi
+RUN_DIR="$INSTALL_BASE_DIR/run"
+LOG_DIR="$INSTALL_BASE_DIR/log"
+PID_FILE="$RUN_DIR/napcat.pid"
 
-       # 现在尝试交互式 sudo，这会提示输入密码
-       sudo "$0" "$@"
-       exit $? # 退出当前非 root 进程, 传递 sudo 的退出码
-   fi
-fi
+
 
 # 检查 dialog --colors 是否安装
 if ! command -v dialog --colors &> /dev/null; then
@@ -335,6 +321,7 @@ configure_http_server() {
                  # cp "$config_file" "$config_file.bak"
                  # 用临时文件覆盖原始文件
                  if mv "$temp_file" "$config_file"; then
+                     #chown "$TARGET_USER:$TARGET_USER" "$config_file"
                      dialog --colors --msgbox "${FG_GREEN}HTTP 服务端配置已成功 $title_prefix！${RESET}" 8 50
                      rm -f "$jq_stderr_file"
                      trap - EXIT
@@ -581,6 +568,7 @@ configure_reverse_http_client() {
                  # cp "$config_file" "$config_file.bak"
                  # 用临时文件覆盖原始文件
                  if mv "$temp_file" "$config_file"; then
+                    # chown "$TARGET_USER:$TARGET_USER" "$config_file"
                      dialog --colors --msgbox "${FG_GREEN}HTTP 客户端配置已成功 $title_prefix！${RESET}" 8 50
                      # 成功后不再需要 trap，清理错误文件
                      rm -f "$jq_stderr_file"
@@ -859,6 +847,7 @@ configure_ws_server() {
             if [[ -s "$temp_file" ]]; then
                  # cp "$config_file" "$config_file.bak" # 可选备份
                  if mv "$temp_file" "$config_file"; then
+                     #chown "$TARGET_USER:$TARGET_USER" "$config_file"
                      dialog --colors --msgbox "${FG_GREEN}WebSocket 服务端配置已成功 $title_prefix！${RESET}" 8 50
                      rm -f "$jq_stderr_file"
                      trap - EXIT
@@ -1119,6 +1108,7 @@ configure_reverse_ws_client() {
             if [[ -s "$temp_file" ]]; then
                  # cp "$config_file" "$config_file.bak" # 可选备份
                  if mv "$temp_file" "$config_file"; then
+                     #chown "$TARGET_USER:$TARGET_USER" "$config_file"
                      dialog --colors --msgbox "${FG_GREEN}WebSocket 客户端配置已成功 $title_prefix！${RESET}" 8 50
                      rm -f "$jq_stderr_file"
                      trap - EXIT
@@ -1255,6 +1245,7 @@ configure_music_signature() {
                  # cp "$config_file" "$config_file.bak"
                  # 用临时文件覆盖原始文件
                  if mv "$temp_file" "$config_file"; then
+                     #chown "$TARGET_USER:$TARGET_USER" "$config_file"
                      dialog --colors --msgbox "${FG_GREEN}音乐签名配置已成功更新！${RESET}" 8 50
                      # 成功后不再需要 trap，清理错误文件
                      rm -f "$jq_stderr_file"
@@ -1455,6 +1446,7 @@ configure_webui() {
                  # cp "$config_file" "$config_file.bak"
                  # 用临时文件覆盖原始文件
                  if mv "$temp_file" "$config_file"; then
+                     #chown "$TARGET_USER:$TARGET_USER" "$config_file"
                      dialog --colors --msgbox "${FG_GREEN}WebUI 配置已成功更新！${RESET}" 8 50
                      # 成功后不再需要 trap，清理错误文件
                      rm -f "$jq_stderr_file"
@@ -1624,6 +1616,8 @@ add_account() {
                 ' "$new_onebot_file" > "$temp_jq_file" 2> "$jq_stderr_file"; then
                     if [[ -s "$temp_jq_file" ]]; then
                         if mv "$temp_jq_file" "$new_onebot_file"; then
+                            #chown "$TARGET_USER:$TARGET_USER" "$new_napcat_file"
+                            #chown "$TARGET_USER:$TARGET_USER" "$new_onebot_file"
                             dialog --colors --msgbox "账号 $NEW_QQ 添加成功！\nNapcat 配置: $new_napcat_file\nOneBot 配置: $new_onebot_file" 10 70
                             rm -f "$jq_stderr_file" # 清理 jq 错误文件
                             trap - EXIT # 清除 trap
@@ -1670,18 +1664,38 @@ configure_autostart() {
     local init_script_name="nc_${qq_account}" # init.d 脚本名称
     local init_script_dir="/etc/init.d"
     local init_script_file="${init_script_dir}/${init_script_name}"
-    local qq_exec_path="qq" # !! 确保这是正确的 QQ 可执行文件路径 !!
-    # 构建执行命令 (无 sudo, 无后台符, 无手动重定向) - 将在 init 脚本内部使用
+    local qq_exec_path="$QQ_EXECUTABLE" # !! 确保这是正确的 QQ 可执行文件路径 !!
+    # 构建执行命令  - 将在 init 脚本内部使用
     # local exec_command="/usr/bin/xvfb-run -a ${qq_exec_path} --no-sandbox -q ${qq_account}"
-    local log_file="/var/log/napcat_${qq_account}.log"
-    local pid_file="/var/run/napcat.pid" # 单一 PID 文件
-    # 工作目录，root 通常是 /root
+    local log_file="$LOG_DIR/napcat_${qq_account}.log"
+    local pid_file="$PID_FILE"
     local work_dir="/root"
     # 指定 PATH 环境变量，供 init 脚本使用
     local service_path_env="PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin"
 
+    clear
+    
+    echo -e "${ANSI_YELLOW}配置开机自启动需要 root 权限。${ANSI_RESET}"
+    echo -e "接下来将请求 sudo 权限，如果需要，请输入您的登录密码"
+
+    if ! sudo -v; then
+        dialog --colors --msgbox "${FG_RED}错误：无法获取 sudo 权限。${RESET}\n操作已取消。" 8 60
+        return 1
+    fi
+
+    if ! sudo test -d "$init_script_dir"; then
+        dialog --colors --msgbox "${FG_RED}错误：${RESET}init.d 目录 '$init_script_dir' 不存在。" 8 60
+        return 1
+    fi
+
+    if ! command -v update-rc.d &> /dev/null; then
+         dialog --colors --msgbox "${FG_RED}错误：${RESET}命令 'update-rc.d' 未找到。\n无法管理 SysVinit 启动脚本。" 8 60
+         return 1
+    fi
+
+
     # 检查 init.d 目录是否存在
-    if [[ ! -d "$init_script_dir" ]]; then
+    if ! sudo test -d "$init_script_dir"; then # 使用 sudo test
         dialog --colors --msgbox "${FG_RED}错误：${RESET}init.d 目录 '$init_script_dir' 不存在。" 8 60
         return 1
     fi
@@ -1701,16 +1715,13 @@ configure_autostart() {
         clear
         if [[ $choice -eq 0 ]]; then # Yes - 取消自启动
             echo "正在禁用并移除 $init_script_name ..."
-            # 尝试从运行级别中移除，然后删除文件
             if sudo update-rc.d -f "$init_script_name" remove &> /dev/null && sudo rm -f "$init_script_file"; then
-                # update-rc.d remove 应该会处理符号链接，无需手动 daemon-reload
                 dialog --colors --msgbox "账号 ${BOLD}${FG_CYAN}$qq_account${RESET} 的开机自启动已成功取消。" 8 50
             else
-                # 如果 update-rc.d 失败，尝试仅删除文件
                 if sudo rm -f "$init_script_file"; then
-                     dialog --colors --msgbox "${FG_YELLOW}警告：${RESET}update-rc.d 移除失败，但启动脚本文件已删除。\n可能需要手动清理 /etc/rc*.d/ 中的链接。" 10 70
+                     dialog --colors --msgbox "${FG_YELLOW}警告：${RESET}update-rc.d 移除失败，但启动脚本文件已删除。" 10 70
                 else
-                     dialog --colors --msgbox "${FG_RED}错误：${RESET}取消自启动失败。请检查权限或手动操作。" 8 60
+                     dialog --colors --msgbox "${FG_RED}错误：${RESET}取消自启动失败。请检查权限。" 8 60
                 fi
             fi
         else # No - 保留
@@ -1792,7 +1803,7 @@ configure_autostart() {
 
     # 创建 init.d 脚本内容并直接写入文件
     # 使用 cat <<EOF，内部的 ${qq_account} 会被展开，而 \$ 开头的变量需要转义以防止展开
-    sudo cat <<EOF > "$init_script_file"
+    cat <<EOF | sudo tee "$init_script_file" > /dev/null
 #!/bin/bash
 ### BEGIN INIT INFO
 # Provides:          nc_${qq_account}
@@ -1801,24 +1812,65 @@ configure_autostart() {
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
 # Short-Description: Manage nc_${qq_account} service
-# Description:       Start of nc_${qq_account} service.
+# Description:       Start of nc_${qq_account} service as user ${TARGET_USER}.
 ### END INIT INFO
 
-PATH=/usr/local/sbin:/usr/local/bin:/sbin:bin:/usr/sbin:/usr/bin
-CMD="sudo /usr/bin/xvfb-run -a qq --no-sandbox -q ${qq_account}"
-PID_FILE="/var/run/napcat.pid"
-LOG_FILE="/var/log/napcat_${qq_account}.log"
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+CMD="xvfb-run -a ${qq_exec_path} --no-sandbox -q ${qq_account}"
+PID_FILE="${pid_file}"
+LOG_FILE="${log_file}"
+RUN_AS_USER="${TARGET_USER}"
 
 start() {
-    touch "\$PID_FILE"
-    exec \$CMD >> "\$LOG_FILE" 2>&1 &
-    echo \$! > "\$PID_FILE"
-    echo "nc sucess"
+    echo "Starting NapCat for QQ ${qq_account} as user \$RUN_AS_USER..."
+    # 1. As root, ensure the directories exist and are owned by the user.
+    mkdir -p "$(dirname "\$LOG_FILE")" "$(dirname "\$PID_FILE")"
+    chown "\$RUN_AS_USER" "$(dirname "\$LOG_FILE")" "$(dirname "\$PID_FILE")"
+    
+    # 2. As user, start the command in the background. We don't try to get the PID here.
+    sudo -u "\$RUN_AS_USER" -H bash -c "\$CMD >> \"\$LOG_FILE\" 2>&1 &"
+    
+    # 3. Wait a moment for the process to appear in the process table.
+    sleep 2
+    
+    # 4. As root, find the PID of the user's process using pgrep for reliability.
+    #    We search for the parent xvfb-run process which is more stable.
+    local found_pid
+    found_pid=\$(pgrep -u "\$RUN_AS_USER" -f "xvfb-run -a .*${qq_exec_path}.*--no-sandbox -q ${qq_account}")
+    
+    if [ -n "\$found_pid" ]; then
+        # Take the first PID if multiple are returned (unlikely for the parent)
+        local main_pid=\$(echo "\$found_pid" | head -n 1)
+        echo "Found process with PID: \$main_pid. Writing to PID file..."
+        # 5. As the user, write the found PID to the file.
+        echo "\$main_pid" | sudo -u "\$RUN_AS_USER" tee "\$PID_FILE" > /dev/null
+        echo "NapCat service started successfully."
+    else
+        echo "Error: Could not find the running NapCat process after starting." >&2
+        echo "Please check the log file for errors: \$LOG_FILE" >&2
+        return 1
+    fi
+}
+
+stop() {
+    echo "Stopping NapCat service..."
+    if [ -f "\$PID_FILE" ]; then
+        # The init script runs as root, so it can read the PID and kill the user's process.
+        local pid_to_kill=\$(cat "\$PID_FILE")
+        if [ -n "\$pid_to_kill" ]; then
+            kill "\$pid_to_kill"
+        fi
+        rm -f "\$PID_FILE"
+    fi
+    echo "NapCat service stopped."
 }
 
 case "\$1" in
     start)
         start
+        ;;
+    stop)
+        stop
         ;;
     *)
         exit 1
@@ -2043,7 +2095,7 @@ delete_account() {
         local delete_failed=false
         # 尝试删除 napcat 文件
         if [[ -f "$napcat_file" ]]; then
-            if sudo rm -f "$napcat_file"; then
+            if rm -f "$napcat_file"; then
                 echo "已删除: $napcat_file"
             else
                 echo "${FG_RED}错误：${RESET}删除 $napcat_file 失败。请检查权限。" >&2
@@ -2054,7 +2106,7 @@ delete_account() {
         fi
         # 尝试删除 onebot 文件
         if [[ -f "$onebot_file" ]]; then
-            if sudo rm -f "$onebot_file"; then
+            if  rm -f "$onebot_file"; then
                 echo "已删除: $onebot_file"
             else
                 echo "${FG_RED}错误：${RESET}删除 $onebot_file 失败。请检查权限。" >&2
