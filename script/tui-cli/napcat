@@ -348,37 +348,55 @@ _get_all_descendant_pids() {
 }
 
 _get_napcat_pid_and_account() {
-    local pid_file="$RUN_DIR/napcat.pid"
-    local pid=""
+    local pids
     local qq_account=""
+    local pid_file="$RUN_DIR/napcat.pid"
 
-    if [[ ! -f "$pid_file" ]] || [[ ! -r "$pid_file" ]]; then
-        return 3 # PID 文件问题
+    # 使用 pgrep 和 -f 标志通过命令行内容查找主 xvfb-run 进程
+    # 这个模式匹配 xvfb-run, qq可执行文件路径, --no-sandbox, -q, 和一个QQ号
+    readarray -t pids < <(pgrep -u "$TARGET_USER" -f "xvfb-run -a .*/qq --no-sandbox -q [0-9]{4,}")
+
+    # 检查是否找到多个独立的 Napcat 实例
+    if [[ ${#pids[@]} -gt 1 ]]; then
+        echo -e "${ANSI_YELLOW}警告: 检测到 ${#pids[@]} 个独立的 Napcat 实例。将自动清理多余进程，只保留一个...${ANSI_RESET}" >&2
+        
+        # 保留第一个PID (通常是启动最早的)，并终止其余的
+        local pids_to_kill=("${pids[@]:1}")
+        for pid_to_kill in "${pids_to_kill[@]}"; do
+            echo "正在终止多余的父进程 PID: $pid_to_kill..." >&2
+            kill "$pid_to_kill" 2>/dev/null && sleep 0.5
+            if kill -0 "$pid_to_kill" 2>/dev/null; then
+                kill -9 "$pid_to_kill" 2>/dev/null
+            fi
+        done
+        # 更新 pids 数组，只保留我们决定留下的那一个
+        pids=("${pids[0]}")
     fi
 
-    pid=$(cat "$pid_file")
-    if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+    # 此时，pids 数组中应该只有 0 或 1 个元素
+    if [[ ${#pids[@]} -eq 0 ]]; then
+        # 如果没有正在运行的进程，清理可能存在的旧 PID 文件
+        [[ -f "$pid_file" ]] && rm -f "$pid_file"
         return 1 # 未运行
     fi
 
-    # 将主 PID 和所有后代 PID 放入一个数组
-    local pids_to_check=("$pid" $(_get_all_descendant_pids "$pid"))
+    # 确认有一个正在运行的进程
+    local pid="${pids[0]}"
+    local cmdline
+    cmdline=$(ps -o cmd= -p "$pid" 2>/dev/null)
 
-    # 遍历整个进程树进行检查
-    for current_pid in "${pids_to_check[@]}"; do
-        local cmdline
-        cmdline=$(ps -o cmd= -p "$current_pid" 2>/dev/null)
-        # 使用更宽松的正则表达式，因为它可能在命令行的任何位置
-        if [[ "$cmdline" =~ --no-sandbox[[:space:]]+-q[[:space:]]+([0-9]{4,}) ]]; then
-            qq_account="${BASH_REMATCH[1]}"
-            echo "$qq_account" # 输出 QQ 账号
-            return 0 # 运行中
-        fi
-    done
-
-    # 如果在整个进程树中都找不到
-    echo "$pid" # 输出主 PID 供参考
-    return 2 # 状态未知
+    # 从命令行中提取 QQ 账号
+    if [[ "$cmdline" =~ --no-sandbox[[:space:]]+-q[[:space:]]+([0-9]{4,}) ]]; then
+        qq_account="${BASH_REMATCH[1]}"
+        # 为了兼容性，用正确的 PID 更新 PID 文件
+        echo "$pid" > "$pid_file"
+        echo "$qq_account" # 向 stdout 输出 QQ 账号
+        return 0 # 运行中
+    else
+        # 如果 pgrep 匹配成功但我们无法从命令行解析出 QQ 号，这是一个未知状态
+        echo "$pid" # 输出 PID 以供调试
+        return 2 # 状态未知
+    fi
 }
 
 # 复制 get_napcat_status 函数 (或者理想情况下从共享库加载)
@@ -406,40 +424,51 @@ get_napcat_status() {
              echo -e "${FG_RED}检查状态出错${RESET}"
              ;;
     esac
-    # 注意：此函数现在只负责 echo，不返回状态码给调用者
+    # 此函数现在只负责 echo，不返回状态码给调用者
 }
 
 
 stop_napcat() {
-    local pid_file="$RUN_DIR/napcat.pid"
-    local pid=""
     dialog --colors --title "停止 Napcat" --infobox "正在尝试停止 Napcat..." 5 50
-    if [[ -f "$pid_file" ]] && [[ -r "$pid_file" ]]; then
-        pid=$(cat "$pid_file")
-        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-            echo -e "${ANSI_YELLOW}正在终止进程 PID: $pid...${ANSI_RESET}"
-            sudo kill "$pid"
-            sleep 2
-            if sudo kill -0 "$pid" 2>/dev/null; then
-                echo -e "${ANSI_RED}正常终止失败，尝试强制终止...${ANSI_RESET}"
-                sudo kill -9 "$pid"
-                sleep 1
-            fi
-            if ! sudo kill -0 "$pid" 2>/dev/null; then
-                echo -e "${ANSI_GREEN}进程已终止。${ANSI_RESET}"
-                sudo rm -f "$pid_file"
-                dialog --colors --title "停止成功" --msgbox "Napcat 进程已停止。" 6 50
-            else
-                dialog --colors --title "停止失败" --msgbox "${FG_RED}无法停止 Napcat 进程 (PID: $pid)。${RESET}\n请手动检查。" 8 60
-            fi
-        else
-            dialog --colors --title "无需停止" --msgbox "Napcat 未在运行 (根据 PID 文件)。" 6 50
-            sudo rm -f "$pid_file" 2>/dev/null # 清理无效文件
-        fi
-    else
-        dialog --colors --title "无需停止" --msgbox "Napcat 未在运行 (无 PID 文件)。" 6 50
+    
+    local pids
+    readarray -t pids < <(pgrep -u "$TARGET_USER" -f "xvfb-run -a .*/qq --no-sandbox -q [0-9]{4,}")
+
+    if [[ ${#pids[@]} -eq 0 ]]; then
+        dialog --colors --title "无需停止" --msgbox "Napcat 未在运行。" 6 50
+        # 清理可能残留的 PID 文件
+        [[ -f "$RUN_DIR/napcat.pid" ]] && rm -f "$RUN_DIR/napcat.pid"
+        return
     fi
-    sleep 1 # 短暂显示 echo 的信息
+
+    echo -e "${ANSI_YELLOW}正在终止 Napcat 进程...${ANSI_RESET}"
+    local all_stopped=true
+    for pid in "${pids[@]}"; do
+        echo "正在终止进程 PID: $pid..."
+        kill "$pid" 2>/dev/null
+    done
+    
+    sleep 2 # 等待进程正常退出
+
+    for pid in "${pids[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            echo -e "${ANSI_RED}正常终止失败 (PID: $pid)，尝试强制终止...${ANSI_RESET}"
+            kill -9 "$pid" 2>/dev/null
+            sleep 1
+        fi
+        if kill -0 "$pid" 2>/dev/null; then
+            all_stopped=false
+        fi
+    done
+
+    if $all_stopped; then
+        echo -e "${ANSI_GREEN}所有相关进程已终止。${ANSI_RESET}"
+        rm -f "$RUN_DIR/napcat.pid"
+        dialog --colors --title "停止成功" --msgbox "Napcat 进程已停止。" 6 50
+    else
+        dialog --colors --title "停止失败" --msgbox "${FG_RED}无法停止所有 Napcat 进程。${RESET}\n请手动检查。" 8 60
+    fi
+    sleep 1
 }
 
 update_napcat() {
