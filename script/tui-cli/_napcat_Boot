@@ -93,45 +93,97 @@ get_qq_accounts() {
     return 0
 }
 
-# 函数：获取 Napcat 状态 (占位符 - 需要具体实现)
-# 您需要根据实际情况修改此函数来检查 Napcat 是否正在运行
-# 例如，检查进程名、PID 文件或监听端口
-get_napcat_status() {
-    local pid_file="$RUN_DIR/napcat.pid"
-    local pid=""
-    local cmdline=""
+
+
+
+
+_get_all_descendant_pids() {
+    local ppid="$1"
+    local children
+    children=$(pgrep -P "$ppid" 2>/dev/null)
+    for child in $children; do
+        echo "$child"
+        _get_all_descendant_pids "$child"
+    done
+}
+
+_get_napcat_pid_and_account() {
+    local pids
     local qq_account=""
-    if [[ ! -f "$pid_file" ]] || [[ ! -r "$pid_file" ]]; then
-        echo -e "${FG_YELLOW}未运行😴${RESET}"
-        return 0
-    fi
-    pid=$(cat "$pid_file")
-    if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
-        echo -e "${FG_YELLOW}未运行😴${RESET}"
-        # rm -f "$pid_file" 2>/dev/null # 可选清理
-        return 0
-    fi
-    cmdline=$(ps -o cmd= -p "$pid" 2>/dev/null)
-    if [[ "$cmdline" =~ .*-q[[:space:]]+([0-9]{4,}) ]]; then
-        qq_account="${BASH_REMATCH[1]}"
-        echo -e "${FG_GREEN}运行中😋 - ${BOLD}$qq_account${RESET}"
-        return 0
-    else
-        # 尝试查找子进程 (更健壮的方式)
-        local child_pids=$(pgrep -P "$pid")
-        for child_pid in $child_pids; do
-            child_cmdline=$(ps -o cmd= -p "$child_pid" 2>/dev/null)
-            # 查找包含 qq 和 -q 参数的子进程命令行
-            if [[ "$child_cmdline" =~ qq.*-q[[:space:]]+([0-9]{4,}) ]]; then
-                 qq_account="${BASH_REMATCH[1]}"
-                 echo -e "${FG_GREEN}运行中😋 - ${BOLD}$qq_account${RESET}"
-                 return 0
+    local pid_file="$RUN_DIR/napcat.pid"
+
+    # 使用 pgrep 和 -f 标志通过命令行内容查找主 xvfb-run 进程
+    # 这个模式匹配 xvfb-run, qq可执行文件路径, --no-sandbox, -q, 和一个QQ号
+    readarray -t pids < <(pgrep -u "$TARGET_USER" -f "xvfb-run -a .*/qq --no-sandbox -q [0-9]{4,}")
+
+    # 检查是否找到多个独立的 Napcat 实例
+    if [[ ${#pids[@]} -gt 1 ]]; then
+        echo -e "${ANSI_YELLOW}警告: 检测到 ${#pids[@]} 个独立的 Napcat 实例。将自动清理多余进程，只保留一个...${ANSI_RESET}" >&2
+        
+        # 保留第一个PID (通常是启动最早的)，并终止其余的
+        local pids_to_kill=("${pids[@]:1}")
+        for pid_to_kill in "${pids_to_kill[@]}"; do
+            echo "正在终止多余的父进程 PID: $pid_to_kill..." >&2
+            kill "$pid_to_kill" 2>/dev/null && sleep 0.5
+            if kill -0 "$pid_to_kill" 2>/dev/null; then
+                kill -9 "$pid_to_kill" 2>/dev/null
             fi
         done
-        # 如果主进程和子进程都没找到有效信息
-        echo -e "${FG_RED}状态未知🤔 (PID: ${BOLD}$pid${RESET})${RESET}"
-        return 0
+        # 更新 pids 数组，只保留我们决定留下的那一个
+        pids=("${pids[0]}")
     fi
+
+    # 此时，pids 数组中应该只有 0 或 1 个元素
+    if [[ ${#pids[@]} -eq 0 ]]; then
+        # 如果没有正在运行的进程，清理可能存在的旧 PID 文件
+        [[ -f "$pid_file" ]] && rm -f "$pid_file"
+        return 1 # 未运行
+    fi
+
+    # 确认有一个正在运行的进程
+    local pid="${pids[0]}"
+    local cmdline
+    cmdline=$(ps -o cmd= -p "$pid" 2>/dev/null)
+
+    # 从命令行中提取 QQ 账号
+    if [[ "$cmdline" =~ --no-sandbox[[:space:]]+-q[[:space:]]+([0-9]{4,}) ]]; then
+        qq_account="${BASH_REMATCH[1]}"
+        # 为了兼容性，用正确的 PID 更新 PID 文件
+        echo "$pid" > "$pid_file"
+        echo "$qq_account" # 向 stdout 输出 QQ 账号
+        return 0 # 运行中
+    else
+        # 如果 pgrep 匹配成功但我们无法从命令行解析出 QQ 号，这是一个未知状态
+        echo "$pid" # 输出 PID 以供调试
+        return 2 # 状态未知
+    fi
+}
+
+
+get_napcat_status() {
+    local status_code
+    local output
+
+    # 调用内部函数，捕获输出和状态码
+    output=$(_get_napcat_pid_and_account)
+    status_code=$?
+
+    case $status_code in
+        0) # 运行中
+            local qq_account="$output"
+            echo -e "${FG_GREEN}运行中😋 - ${BOLD}$qq_account${RESET}"
+            ;;
+        1) # 未运行
+            echo -e "${FG_YELLOW}未运行😴${RESET}"
+            ;;
+        2) # 状态未知
+            local pid="$output"
+            echo -e "${FG_RED}状态未知🤔 (PID: ${BOLD}$pid${RESET})${RESET}"
+            ;;
+        *) # 其他未知错误
+             echo -e "${FG_RED}检查状态出错${RESET}"
+             ;;
+    esac
 }
 
 # 函数：执行登录
