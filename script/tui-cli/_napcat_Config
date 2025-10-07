@@ -1670,6 +1670,12 @@ configure_autostart() {
     local log_file="$LOG_DIR/napcat_${qq_account}.log"
     local pid_file="$PID_FILE"
     local work_dir="/root"
+
+
+    local hardcoded_log_dir="$LOG_DIR"
+    local hardcoded_pid_dir="$RUN_DIR"
+
+
     # 指定 PATH 环境变量，供 init 脚本使用
     local service_path_env="PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin"
 
@@ -1823,9 +1829,12 @@ RUN_AS_USER="${TARGET_USER}"
 
 start() {
     echo "Starting NapCat for QQ ${qq_account} as user \$RUN_AS_USER..."
+    
     # 1. As root, ensure the directories exist and are owned by the user.
-    mkdir -p "$(dirname "\$LOG_FILE")" "$(dirname "\$PID_FILE")"
-    chown "\$RUN_AS_USER" "$(dirname "\$LOG_FILE")" "$(dirname "\$PID_FILE")"
+
+    mkdir -p "${hardcoded_log_dir}" "${hardcoded_pid_dir}"
+    chown "\$RUN_AS_USER" "${hardcoded_log_dir}" "${hardcoded_pid_dir}"
+    
     
     # 2. As user, start the command in the background. We don't try to get the PID here.
     sudo -u "\$RUN_AS_USER" -H bash -c "\$CMD >> \"\$LOG_FILE\" 2>&1 &"
