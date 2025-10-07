@@ -31,44 +31,47 @@ _get_all_descendant_pids_old() {
     done
 }
 
-# 辅助函数：从 PID 文件中的 PID 获取正在运行的 QQ 号
-_get_running_qq_from_global_pid() {
-    local pid
-    local running_qq=""
+# 新的核心辅助函数：查找所有顶层Napcat进程
+# 返回一个由PID和QQ号组成的字符串数组，格式为 "PID:QQ"
+_find_top_level_instances() {
+    local candidate_pids
+    local top_level_pids=()
+    local instance_info=()
 
-    if [[ ! -f "$PID_FILE" ]] || [[ ! -r "$PID_FILE" ]]; then
-        echo ""
+    readarray -t candidate_pids < <(pgrep -u "$TARGET_USER" -f ".*/qq --no-sandbox -q [0-9]{4,}")
+    if [[ ${#candidate_pids[@]} -eq 0 ]]; then
+        echo "" # 返回空
         return
     fi
 
-    pid=$(cat "$PID_FILE")
-    #  No sudo needed to check user's own process 
-    if [[ -z "$pid" ]] || ! kill -0 "$pid" &>/dev/null; then
-        echo ""
-        return
-    fi
-
-    # 将主 PID 和所有后代 PID 放入一个数组
-    local pids_to_check=("$pid" $(_get_all_descendant_pids_old "$pid"))
-
-    # 遍历整个进程树进行检查
-    for current_pid in "${pids_to_check[@]}"; do
-        local cmdline
-        cmdline=$(ps -o cmd= -p "$current_pid" 2>/dev/null)
-        if [[ "$cmdline" =~ --no-sandbox[[:space:]]+-q[[:space:]]+([0-9]{4,}) ]]; then
-            running_qq="${BASH_REMATCH[1]}"
-            echo "$running_qq"
-            return
+    for pid in "${candidate_pids[@]}"; do
+        local ppid=$(ps -o ppid= -p "$pid" | tr -d ' ')
+        local is_child=false
+        for other_pid in "${candidate_pids[@]}"; do
+            if [[ "$ppid" == "$other_pid" ]]; then
+                is_child=true
+                break
+            fi
+        done
+        if ! $is_child; then
+            top_level_pids+=("$pid")
         fi
     done
 
-    echo "" # 如果未找到，返回空
+    for pid in "${top_level_pids[@]}"; do
+        local cmdline=$(ps -o cmd= -p "$pid" 2>/dev/null)
+        if [[ "$cmdline" =~ --no-sandbox[[:space:]]+-q[[:space:]]+([0-9]{4,}) ]]; then
+            instance_info+=("${pid}:${BASH_REMATCH[1]}")
+        fi
+    done
+    
+    echo "${instance_info[@]}" # 返回空格分隔的 "PID:QQ" 列表
 }
+
 
 QQ=$2
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 CMD="xvfb-run -a '$QQ_EXECUTABLE' --no-sandbox -q $QQ"
-#  Use new LOG_DIR path 
 LOG_FILE="$LOG_DIR/napcat_$QQ.log"
 
 start() {
@@ -77,39 +80,50 @@ start() {
         exit 1
     fi
 
-    local running_qq_now
-    running_qq_now=$(_get_running_qq_from_global_pid)
-    local current_pid_in_file=""
-    [[ -f "$PID_FILE" ]] && current_pid_in_file=$(cat "$PID_FILE")
-
-    if [[ -n "$running_qq_now" ]]; then
-        if [[ "$running_qq_now" == "$QQ" ]]; then
-            echo -e "${RED}服务已为QQ $QQ 运行 (PID: $current_pid_in_file)${NC}"
-        else
-            echo -e "${RED}NapCat 服务已为另一个QQ ${YELLOW}$running_qq_now${RED} 运行 (PID: $current_pid_in_file)${NC}"
-            echo -e "${YELLOW}请先停止当前运行的服务。禁止多开。${NC}"
-        fi
+    local running_instances_str=$(_find_top_level_instances)
+    if [[ -n "$running_instances_str" ]]; then
+        echo -e "${RED}错误：检测到正在运行的 Napcat 实例。禁止多开。${NC}"
+        local instances=($running_instances_str)
+        for instance in "${instances[@]}"; do
+            local pid=${instance%%:*}
+            local running_qq=${instance##*:}
+            echo -e "${YELLOW}  - PID: $pid, QQ: $running_qq${NC}"
+        done
+        echo -e "${YELLOW}请先使用 'napcat stop' 停止所有实例。${NC}"
         exit 1
-    else
-        if [[ -f "$PID_FILE" ]]; then
-            echo -e "${YELLOW}发现无效的 PID 文件，正在清理...${NC}"
-            rm -f "$PID_FILE"
-        fi
     fi
+    
+    # 清理可能残留的PID文件
+    [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
 
-    #  Ensure user-owned directories exist 
     mkdir -p "$RUN_DIR" "$LOG_DIR"
 
     echo -e "${MAGENTA}启动 napcat 服务中 QQ: $QQ...${NC}"
     
-    #  Start process as current user, no sudo needed 
     bash -c "$CMD" >> "$LOG_FILE" 2>&1 &
     local process_pid=$!
 
     if [[ "$process_pid" -gt 0 ]]; then
-        #  Write to user-owned PID file, no sudo needed 
-        echo "$process_pid" > "$PID_FILE"
-        echo -e "${GREEN}服务已启动 (PID: $process_pid, QQ: $QQ, PID File: $PID_FILE)${NC}"
+        # 等待一下，让xvfb-run启动真正的qq进程
+        sleep 1
+        # 查找顶层进程并写入PID文件
+        local final_pid=""
+        local running_instances_str=$(_find_top_level_instances)
+        if [[ -n "$running_instances_str" ]]; then
+            local instances=($running_instances_str)
+            # 假设只有一个实例被我们刚刚启动
+            final_pid=${instances[0]%%:*}
+        fi
+
+        if [[ -n "$final_pid" ]]; then
+            echo "$final_pid" > "$PID_FILE"
+            echo -e "${GREEN}服务已启动 (PID: $final_pid, QQ: $QQ, PID File: $PID_FILE)${NC}"
+        else
+            # 如果找不到，回退到使用bash的PID
+            echo "$process_pid" > "$PID_FILE"
+            echo -e "${YELLOW}警告：未能精确定位顶层进程，使用初始PID: $process_pid。${NC}"
+            echo -e "${GREEN}服务已启动 (QQ: $QQ, PID File: $PID_FILE)${NC}"
+        fi
     else
         echo -e "${RED}启动服务失败，未能获取 PID。${NC}"
         exit 1
@@ -117,68 +131,66 @@ start() {
 }
 
 stop() {
-    local running_qq_now
-    running_qq_now=$(_get_running_qq_from_global_pid)
-    local current_pid_in_file=""
-    [[ -f "$PID_FILE" ]] && current_pid_in_file=$(cat "$PID_FILE")
-
-    if [ -z "$QQ" ]; then # 如果没有指定 QQ，则停止 PID 文件中记录的进程
-        if [[ -n "$running_qq_now" ]] && [[ -n "$current_pid_in_file" ]]; then
-            echo -e "${MAGENTA}停止 napcat 服务 (PID: $current_pid_in_file, QQ: $running_qq_now)...${NC}"
-            local log_to_remove="$LOG_DIR/napcat_${running_qq_now}.log"
-            
-            #  No sudo needed to kill/check user's own process 
-            if kill "$current_pid_in_file" 2>/dev/null; then
-                sleep 2
-            fi
-            if kill -0 "$current_pid_in_file" 2>/dev/null; then
-                 echo -e "${YELLOW}正常终止失败，尝试强制终止 (PID: $current_pid_in_file)...${NC}"
-                 kill -9 "$current_pid_in_file" 2>/dev/null
-                 sleep 1
-            fi
-
-            if ! kill -0 "$current_pid_in_file" 2>/dev/null; then
-                rm -f "$PID_FILE"
-                rm -f "$log_to_remove"
-                echo -e "${RED}服务已停止 (QQ: $running_qq_now)${NC}"
-            else
-                echo -e "${RED}无法停止服务 (PID: $current_pid_in_file)。请手动检查。${NC}"
-            fi
-        else
-            echo -e "${GREEN}没有 Napcat 服务正在运行 (根据 $PID_FILE)${NC}"
-            [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
-        fi
-        return 0
+    local running_instances_str=$(_find_top_level_instances)
+    if [[ -z "$running_instances_str" ]]; then
+        echo -e "${GREEN}没有 Napcat 服务正在运行。${NC}"
+        [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
+        return
     fi
 
-    # 如果指定了 QQ 号
-    if [[ -n "$running_qq_now" ]] && [[ -n "$current_pid_in_file" ]]; then
-        if [[ "$running_qq_now" == "$QQ" ]]; then
-            echo -e "${MAGENTA}停止 napcat 服务中 QQ: $QQ (PID: $current_pid_in_file)...${NC}"
-            #  No sudo needed 
-            if kill "$current_pid_in_file" 2>/dev/null; then
-                sleep 2
+    local instances=($running_instances_str)
+    local pids_to_kill=()
+    
+    if [ -z "$QQ" ]; then # 如果没有指定 QQ，则停止所有实例
+        echo -e "${MAGENTA}正在停止所有 Napcat 实例...${NC}"
+        for instance in "${instances[@]}"; do
+            pids_to_kill+=("${instance%%:*}")
+        done
+    else # 如果指定了 QQ 号
+        local found=false
+        for instance in "${instances[@]}"; do
+            local pid=${instance%%:*}
+            local running_qq=${instance##*:}
+            if [[ "$running_qq" == "$QQ" ]]; then
+                echo -e "${MAGENTA}正在停止 napcat 服务中 QQ: $QQ (PID: $pid)...${NC}"
+                pids_to_kill+=("$pid")
+                found=true
             fi
-            if kill -0 "$current_pid_in_file" 2>/dev/null; then
-                 echo -e "${YELLOW}正常终止失败，尝试强制终止 (PID: $current_pid_in_file)...${NC}"
-                 kill -9 "$current_pid_in_file" 2>/dev/null
-                 sleep 1
-            fi
-
-            if ! kill -0 "$current_pid_in_file" 2>/dev/null; then
-                rm -f "$PID_FILE"
-                rm -f "$LOG_FILE"
-                echo -e "${RED}服务已停止 (QQ: $QQ)${NC}"
-            else
-                echo -e "${RED}无法停止服务 (PID: $current_pid_in_file, QQ: $QQ)。请手动检查。${NC}"
-            fi
-        else
-            echo -e "${YELLOW}正在运行的服务是为 QQ ${running_qq_now} (PID $current_pid_in_file), 而不是请求的 QQ $QQ.${NC}"
-            echo -e "${GREEN}服务 (QQ: $running_qq_now) 未停止.${NC}"
+        done
+        if ! $found; then
+            echo -e "${YELLOW}没有找到为 QQ $QQ 运行的服务。${NC}"
+            return
         fi
-    else
-        echo -e "${GREEN}服务未运行 (或 PID 文件 $PID_FILE 无效/不存在) 来停止 QQ $QQ.${NC}"
-        [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
+    fi
+
+    if [[ ${#pids_to_kill[@]} -eq 0 ]]; then
+        echo -e "${GREEN}无需操作。${NC}"
+        return
+    fi
+
+    for pid in "${pids_to_kill[@]}"; do
+        local all_pids=("$pid" $(_get_all_descendant_pids_old "$pid"))
+        kill "${all_pids[@]}" 2>/dev/null
+    done
+    sleep 2
+
+    local all_stopped=true
+    for pid in "${pids_to_kill[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            echo -e "${YELLOW}正常终止失败，尝试强制终止 (PID: $pid)...${NC}"
+            local all_pids=("$pid" $(_get_all_descendant_pids_old "$pid"))
+            kill -9 "${all_pids[@]}" 2>/dev/null
+            sleep 1
+        fi
+        if kill -0 "$pid" 2>/dev/null; then
+            all_stopped=false
+            echo -e "${RED}无法停止服务 (PID: $pid)。请手动检查。${NC}"
+        fi
+    done
+
+    if $all_stopped; then
+        rm -f "$PID_FILE"
+        echo -e "${RED}服务已停止。${NC}"
     fi
 }
 
@@ -197,30 +209,23 @@ restart() {
 }
 
 status() {
-    local running_qq_now
-    running_qq_now=$(_get_running_qq_from_global_pid)
-    local current_pid_in_file=""
-    [[ -f "$PID_FILE" ]] && current_pid_in_file=$(cat "$PID_FILE")
-
-    if [ -z "$QQ" ]; then
-        if [[ -n "$running_qq_now" ]] && [[ -n "$current_pid_in_file" ]]; then
-            echo -e "${GREEN}Napcat 服务运行中: QQ $running_qq_now (PID: $current_pid_in_file, PID File: $PID_FILE)${NC}"
-        else
-            echo -e "${RED}没有 Napcat 服务正在运行 (根据 $PID_FILE)${NC}"
-            [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
-        fi
-    else
-        if [[ -n "$running_qq_now" ]] && [[ -n "$current_pid_in_file" ]]; then
-            if [[ "$running_qq_now" == "$QQ" ]]; then
-                echo -e "${GREEN}服务运行中 QQ: $QQ (PID: $current_pid_in_file, PID File: $PID_FILE)${NC}"
-            else
-                echo -e "${RED}服务未针对 QQ $QQ 运行. 当前运行的是 QQ $running_qq_now (PID: $current_pid_in_file, PID File: $PID_FILE)${NC}"
-            fi
-        else
-            echo -e "${RED}服务未运行 QQ: $QQ (根据 $PID_FILE)${NC}"
-            [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
-        fi
+    local running_instances_str=$(_find_top_level_instances)
+    if [[ -z "$running_instances_str" ]]; then
+        echo -e "${RED}没有 Napcat 服务正在运行。${NC}"
+        [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
+        return
     fi
+
+    local instances=($running_instances_str)
+    echo -e "${GREEN}检测到 ${#instances[@]} 个正在运行的 Napcat 实例:${NC}"
+    for instance in "${instances[@]}"; do
+        local pid=${instance%%:*}
+        local running_qq=${instance##*:}
+        
+        if [ -z "$QQ" ] || [[ "$QQ" == "$running_qq" ]]; then
+             echo -e "  - ${GREEN}运行中${NC}: QQ ${CYAN}$running_qq${NC} (PID: ${YELLOW}$pid${NC})"
+        fi
+    done
 }
 
 log() {
