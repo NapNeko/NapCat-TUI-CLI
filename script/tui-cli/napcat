@@ -354,7 +354,7 @@ _get_napcat_pid_and_account() {
     local pid_file="$RUN_DIR/napcat.pid"
 
     # 找到所有可能的候选进程
-    readarray -t candidate_pids < <(pgrep -u "$TARGET_USER" -f ".*/qq --no-sandbox -q [0-9]{4,}")
+    readarray -t candidate_pids < <(pgrep  -f ".*/qq --no-sandbox -q [0-9]{4,}")
 
     # 如果一个候选者都没有，直接返回
     if [[ ${#candidate_pids[@]} -eq 0 ]]; then
@@ -460,7 +460,7 @@ stop_napcat() {
     # --- 使用与上面完全相同的逻辑来找到所有顶层父进程 ---
     local candidate_pids
     local final_pids=()
-    readarray -t candidate_pids < <(pgrep -u "$TARGET_USER" -f ".*/qq --no-sandbox -q [0-9]{4,}")
+    readarray -t candidate_pids < <(pgrep  -f ".*/qq --no-sandbox -q [0-9]{4,}")
 
     if [[ ${#candidate_pids[@]} -gt 0 ]]; then
         for pid in "${candidate_pids[@]}"; do

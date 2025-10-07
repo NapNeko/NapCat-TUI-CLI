@@ -38,7 +38,7 @@ _find_top_level_instances() {
     local top_level_pids=()
     local instance_info=()
 
-    readarray -t candidate_pids < <(pgrep -u "$TARGET_USER" -f ".*/qq --no-sandbox -q [0-9]{4,}")
+    readarray -t candidate_pids < <(pgrep  -f ".*/qq --no-sandbox -q [0-9]{4,}")
     if [[ ${#candidate_pids[@]} -eq 0 ]]; then
         echo "" # 返回空
         return

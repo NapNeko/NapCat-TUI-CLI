@@ -1845,7 +1845,7 @@ start() {
     # 4. As root, find the PID of the user's process using pgrep for reliability.
     #    We search for the parent xvfb-run process which is more stable.
     local found_pid
-    found_pid=\$(pgrep -u "\$RUN_AS_USER" -f "xvfb-run -a .*${qq_exec_path}.*--no-sandbox -q ${qq_account}")
+    found_pid=\$(pgrep  -f "xvfb-run -a .*${qq_exec_path}.*--no-sandbox -q ${qq_account}")
     
     if [ -n "\$found_pid" ]; then
         # Take the first PID if multiple are returned (unlikely for the parent)
