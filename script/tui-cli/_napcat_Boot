@@ -113,7 +113,7 @@ _get_napcat_pid_and_account() {
     local qq_account=""
     local pid_file="$RUN_DIR/napcat.pid"
 
-    # 步骤 1: 广泛撒网，找到所有可能的候选进程
+    # 找到所有可能的候选进程
     readarray -t candidate_pids < <(pgrep  -f ".*/qq --no-sandbox -q [0-9]{4,}")
 
     # 如果一个候选者都没有，直接返回
@@ -122,7 +122,7 @@ _get_napcat_pid_and_account() {
         return 1 # 未运行
     fi
 
-    # 步骤 2 & 3: 智能过滤，只保留顶层父进程
+    # 只保留顶层父进程
     for pid in "${candidate_pids[@]}"; do
         local ppid
         ppid=$(ps -o ppid= -p "$pid" | tr -d ' ') # 获取父进程ID并去除空格

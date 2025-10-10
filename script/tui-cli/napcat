@@ -79,10 +79,10 @@ if [[ ! -d "$NAPCAT_DIR" ]]; then
     if [[ $choice -eq 0 ]]; then # Yes
         dialog --colors --title "正在安装 Napcat" --infobox "正在从 $INSTALL_SCRIPT_URL 下载安装脚本..." 5 70
         if curl -Lo "$INSTALL_SCRIPT_LOCAL" "$INSTALL_SCRIPT_URL"; then
-            dialog --colors --title "正在安装 Napcat" --infobox "下载完成，正在执行安装脚本 (sudo bash $INSTALL_SCRIPT_LOCAL)..." 5 70
+            dialog --colors --title "正在安装 Napcat" --infobox "下载完成，正在执行安装脚本 (bash $INSTALL_SCRIPT_LOCAL)..." 5 70
             # 赋予执行权限并执行
             chmod +x "$INSTALL_SCRIPT_LOCAL"
-            if sudo bash "$INSTALL_SCRIPT_LOCAL"; then
+            if bash "$INSTALL_SCRIPT_LOCAL"; then
                 dialog --colors --title "安装成功" --msgbox "Napcat 安装脚本执行成功！\n请重新运行 NapcatShell 以继续。" 8 60
                 rm -f "$INSTALL_SCRIPT_LOCAL" # 清理安装脚本
                 exit 0
@@ -362,7 +362,7 @@ _get_napcat_pid_and_account() {
         return 1 # 未运行
     fi
 
-    # 步骤 2 & 3: 智能过滤，只保留顶层父进程
+    # 只保留顶层父进程
     for pid in "${candidate_pids[@]}"; do
         local ppid
         ppid=$(ps -o ppid= -p "$pid" | tr -d ' ') # 获取父进程ID并去除空格
@@ -519,13 +519,13 @@ stop_napcat() {
 }
 
 update_napcat() {
-    dialog --colors --title "更新 Napcat" --yesno "这将执行官方在线安装/更新脚本。\n\n参数: --docker n --cli y\n\n确定要继续吗？" 10 60 2>&1 >/dev/tty
+    dialog --colors --title "更新 Napcat" --yesno "这将以当前用户 (${TARGET_USER}) 权限执行官方在线安装/更新脚本。\n\n参数: --docker n --cli y\n\n确定要继续吗？" 10 70 2>&1 >/dev/tty
     choice=$?
     clear
     if [[ $choice -eq 0 ]]; then # Yes
-        dialog --colors --title "正在更新 Napcat" --infobox "正在执行在线更新脚本...\ncurl -sSL $INSTALL_SCRIPT_URL | sudo bash -s -- --docker n --cli y" 8 70
-        # 直接执行在线脚本
-        if curl -sSL "$INSTALL_SCRIPT_URL" | sudo bash -s -- --docker n --cli y; then
+        dialog --colors --title "正在更新 Napcat" --infobox "正在执行在线更新脚本...\ncurl -sSL $INSTALL_SCRIPT_URL | bash -s -- --docker n --cli y" 8 70
+        # 直接以当前用户权限执行在线脚本
+        if curl -sSL "$INSTALL_SCRIPT_URL" | bash -s -- --docker n --cli y; then
             dialog --colors --title "更新成功" --msgbox "Napcat 更新脚本执行成功！" 6 50
         else
             dialog --colors --title "更新失败" --msgbox "${FG_RED}Napcat 更新脚本执行失败。${RESET}\n请检查网络连接或脚本输出。" 8 60
