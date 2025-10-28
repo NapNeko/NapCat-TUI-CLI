@@ -1,4 +1,4 @@
-asd#!/bin/bash
+#!/bin/bash
 
 MAGENTA='\033[0;1;35;95m'
 RED='\033[0;1;31;91m'
