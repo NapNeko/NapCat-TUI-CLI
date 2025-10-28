@@ -84,6 +84,27 @@ function network_test() {
     return 0 # Return success
 }
 
+# 校验下载的文件是否为有效的 Shell 脚本
+function validate_downloaded_script() {
+    local file_path="$1"
+
+    # 文件是否存在且非空
+    if [[ ! -s "$file_path" ]]; then
+        log "校验失败: 文件为空或不存在。"
+        return 1
+    fi
+
+    # 读取第一行，判断是否以 #! 开头
+    local first_line
+    read -r first_line < "$file_path"
+    if [[ "$first_line" == "#!"* ]]; then
+        return 0 # 校验通过
+    else
+        # 校验失败时，不在这里打印日志，由调用者打印统一的错误信息
+        return 1 # 校验失败
+    fi
+}
+
 
 function check_and_install_dependencies() {
     local missing_deps=()
@@ -241,8 +262,20 @@ function install_cli_components() {
             log "${file_name} 文件下载失败, 请检查网络或链接 (${download_url})。"
             rm -f "${temp_file}" # Clean up failed download (no sudo needed)
             download_failed=true
-            continue # Try downloading the next file
+            break # 下载失败，立即停止
         fi
+
+        # 校验步骤
+        if ! validate_downloaded_script "${temp_file}"; then
+            log "错误: 下载的 ${file_name} 文件内容无效，校验失败！请检查网络或者镜像。"
+            log "文件内容预览 (前5行):"
+            head -n 5 "${temp_file}" | sed 's/^/    /'
+            rm -f "${temp_file}"
+            download_failed=true
+            break # 立即停止后续所有下载
+        fi
+
+
         log "${file_name} 文件下载成功: ${temp_file}"
 
         # Move the file to the target location first (needs sudo)
