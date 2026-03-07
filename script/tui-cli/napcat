@@ -646,16 +646,17 @@ view_log() {
 }
 #  主菜单循环 
 while true; do
-    # 检查更新
-    check_for_update
-    update_check_status=$?
-    update_display_status=""
-    case $update_check_status in
-        1) update_display_status="${FG_YELLOW}有可用更新${RESET}" ;;
-        0) update_display_status="${FG_GREEN}已是最新${RESET}" ;;
-        *) update_display_status="${FG_RED}检查失败${RESET}" ;;
-    esac
-
+    # # 检查更新
+    # check_for_update
+    # update_check_status=$?
+    # update_display_status=""
+    # case $update_check_status in
+    #     1) update_display_status="${FG_YELLOW}有可用更新${RESET}" ;;
+    #     0) update_display_status="${FG_GREEN}已是最新${RESET}" ;;
+    #     *) update_display_status="${FG_RED}检查失败${RESET}" ;;
+    # esac
+    # 显示更新提示
+    update_display_status="${FG_CYAN}请前往 webui-基础信息-NapCat 版本${RESET}"
     # 获取运行状态
     NAPCAT_STATUS=$(get_napcat_status)
 
