@@ -317,7 +317,7 @@ start_napcat_login() {
     local user_command="xvfb-run -a '$QQ_EXECUTABLE' --no-sandbox -q '$qq_account'"
 
     # 直接以当前用户身份在后台运行
-    bash -c "$user_command" > "$log_file" 2>&1 &
+    nohup bash -c "$user_command" > "$log_file" 2>&1 &
     NAPCAT_PID=$!
 
     # 检查后台命令是否成功启动 (PID 是否大于 0)

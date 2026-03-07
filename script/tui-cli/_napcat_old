@@ -100,7 +100,7 @@ start() {
 
     echo -e "${MAGENTA}启动 napcat 服务中 QQ: $QQ...${NC}"
     
-    bash -c "$CMD" >> "$LOG_FILE" 2>&1 &
+    nohup bash -c "$CMD" >> "$LOG_FILE" 2>&1 &
     local process_pid=$!
 
     if [[ "$process_pid" -gt 0 ]]; then
