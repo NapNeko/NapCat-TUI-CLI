@@ -74,6 +74,26 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 CMD="xvfb-run -a '$QQ_EXECUTABLE' --no-sandbox -q $QQ"
 LOG_FILE="$LOG_DIR/napcat_$QQ.log"
 
+remove_sysv_autostart() {
+    local service_name=$1
+    local init_script_path=$2
+
+    if sudo test -f "$init_script_path"; then
+        if command -v update-rc.d &> /dev/null; then
+            sudo update-rc.d -f "$service_name" remove &>/dev/null || true
+        fi
+
+        shopt -s nullglob
+        local rc_link
+        for rc_link in /etc/rc*.d/*"$service_name"; do
+            sudo rm -f "$rc_link"
+        done
+        shopt -u nullglob
+
+        sudo rm -f "$init_script_path"
+    fi
+}
+
 start() {
     if [ -z "$QQ" ]; then
         echo -e "${RED}请传入QQ号,如${NC}${GREEN} $0 start 3116556127${NC}"
@@ -255,6 +275,52 @@ startup() {
     fi
 
     local init_script_path="/etc/init.d/nc_${QQ}"
+    local systemd_service_name="nc_${QQ}.service"
+    local systemd_service_path="/etc/systemd/system/${systemd_service_name}"
+
+    if command -v systemctl &> /dev/null && sudo test -d /etc/systemd/system; then
+        if sudo test -f "$systemd_service_path" || sudo test -f "$init_script_path"; then
+            echo -e "${GREEN}已存在QQ ${QQ} 的开机自启动服务。${NC}"
+            read -p "是否要重新配置？ (y/N): " choice
+            if [[ ! "$choice" =~ ^[Yy]$ ]]; then
+                echo -e "${GREEN}操作取消。${NC}"
+                exit 0
+            fi
+            sudo systemctl disable "$systemd_service_name" &>/dev/null || true
+            sudo rm -f "$systemd_service_path"
+            remove_sysv_autostart "nc_${QQ}" "$init_script_path"
+            sudo systemctl daemon-reload &>/dev/null || true
+        fi
+
+        echo -e "${MAGENTA}正在为账号 $QQ 创建 systemd 开机自启动服务...${NC}"
+        sudo tee "$systemd_service_path" > /dev/null <<EOF
+[Unit]
+Description=NapCat for QQ ${QQ}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${TARGET_USER}
+WorkingDirectory=${TARGET_USER_HOME}
+ExecStart=/bin/bash -lc 'mkdir -p "${LOG_DIR}" "${RUN_DIR}"; exec xvfb-run -a "${QQ_EXECUTABLE}" --no-sandbox -q "${QQ}" >> "${LOG_FILE}" 2>&1'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+        if sudo systemctl daemon-reload && sudo systemctl enable "$systemd_service_name"; then
+            echo -e "${MAGENTA}已添加QQ ${QQ} 的开机自启动服务 (systemd).${NC}"
+            exit 0
+        fi
+
+        sudo rm -f "$systemd_service_path"
+        sudo systemctl daemon-reload &>/dev/null || true
+        echo -e "${RED}错误：启用 systemd 服务 ${systemd_service_name} 失败。${NC}"
+        exit 1
+    fi
     
     if sudo test -f "$init_script_path"; then
         echo -e "${GREEN}已存在QQ ${QQ} 的开机自启动服务: $init_script_path${NC}"
@@ -293,19 +359,11 @@ startup() {
         case "$conflict_choice" in
             1)
                 echo -e "${YELLOW}正在禁用并移除旧脚本 $existing_script_name ...${NC}"
-                if command -v update-rc.d &> /dev/null; then
-                    sudo update-rc.d "nc_${other_qq}" remove &>/dev/null
-                elif command -v systemctl &> /dev/null && sudo systemctl list-unit-files | grep -q "nc_${other_qq}.service"; then
+                if command -v systemctl &> /dev/null && sudo systemctl list-unit-files | grep -q "nc_${other_qq}.service"; then
                     sudo systemctl disable "nc_${other_qq}.service" &>/dev/null
                 fi
-                
-                if sudo rm -f "$existing_script_file"; then
-                    echo -e "${GREEN}旧脚本已移除，继续添加新脚本...${NC}"
-                else
-                    echo -e "${RED}错误：禁用或移除旧脚本 '$existing_script_name' 失败。${NC}"
-                    echo -e "${RED}请检查权限或手动操作后重试。${NC}"
-                    exit 1
-                fi
+                remove_sysv_autostart "nc_${other_qq}" "$existing_script_file"
+                echo -e "${GREEN}旧脚本已移除，继续添加新脚本...${NC}"
                 ;;
             2)
                 echo -e "${GREEN}添加账号 $QQ 的自启动已取消。${NC}"
@@ -396,15 +454,18 @@ startdown() {
     fi
 
     local init_script_path="/etc/init.d/nc_${QQ}"
-    if ! sudo test -f "$init_script_path"; then
-        echo -e "${RED}不存在QQ ${QQ} 的开机自启动服务: $init_script_path${NC}"
+    local systemd_service_path="/etc/systemd/system/nc_${QQ}.service"
+    if ! sudo test -f "$init_script_path" && ! sudo test -f "$systemd_service_path"; then
+        echo -e "${RED}不存在QQ ${QQ} 的开机自启动服务.${NC}"
         exit 1
     fi
 
-    if command -v update-rc.d &> /dev/null; then
-        sudo update-rc.d "nc_${QQ}" remove
+    remove_sysv_autostart "nc_${QQ}" "$init_script_path"
+    if command -v systemctl &> /dev/null; then
+        sudo systemctl disable "nc_${QQ}.service" &>/dev/null || true
+        sudo rm -f "/etc/systemd/system/nc_${QQ}.service"
+        sudo systemctl daemon-reload &>/dev/null || true
     fi
-    sudo rm -f "$init_script_path"
     echo -e "${MAGENTA}已取消QQ ${QQ} 的开机自启动服务.${NC}"
 }
 
@@ -431,14 +492,25 @@ remove() {
 
     echo -e "${YELLOW}正在尝试移除所有 nc_QQ 开机自启动项 (需要 sudo)...${NC}"
     if sudo -v; then
+        if command -v systemctl &> /dev/null; then
+            shopt -s nullglob
+            for systemd_service in /etc/systemd/system/nc_*.service; do
+                local service_name
+                service_name=$(basename "$systemd_service")
+                echo "Removing startup service $service_name..."
+                sudo systemctl disable "$service_name" &>/dev/null || true
+                sudo rm -f "$systemd_service"
+            done
+            shopt -u nullglob
+            sudo systemctl daemon-reload &>/dev/null || true
+        fi
+
         for old_init_script in /etc/init.d/nc_*; do
             if sudo test -f "$old_init_script"; then
-                local old_qq_num=$(basename "$old_init_script" | sed 's/nc_//')
-                echo "Removing startup for QQ $old_qq_num..."
-                if command -v update-rc.d &> /dev/null; then
-                    sudo update-rc.d "nc_${old_qq_num}" remove &>/dev/null
-                fi
-                sudo rm -f "$old_init_script"
+                local old_init_name
+                old_init_name=$(basename "$old_init_script")
+                echo "Removing startup for ${old_init_name#nc_}..."
+                remove_sysv_autostart "$old_init_name" "$old_init_script"
             fi
         done
     else

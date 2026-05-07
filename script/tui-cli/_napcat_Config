@@ -1659,6 +1659,26 @@ add_account() {
 
 
 # 配置开机自启动
+remove_sysv_autostart() {
+    local service_name=$1
+    local init_script_file=$2
+
+    if sudo test -f "$init_script_file"; then
+        if command -v update-rc.d &> /dev/null; then
+            sudo update-rc.d -f "$service_name" remove &> /dev/null || true
+        fi
+
+        shopt -s nullglob
+        local rc_link
+        for rc_link in /etc/rc*.d/*"$service_name"; do
+            sudo rm -f "$rc_link"
+        done
+        shopt -u nullglob
+
+        sudo rm -f "$init_script_file"
+    fi
+}
+
 configure_autostart() {
     local qq_account=$1
     local init_script_name="nc_${qq_account}" # init.d 脚本名称
@@ -1687,6 +1707,124 @@ configure_autostart() {
     if ! sudo -v; then
         dialog --colors --msgbox "${FG_RED}错误：无法获取 sudo 权限。${RESET}\n操作已取消。" 8 60
         return 1
+    fi
+
+    # 优先使用 systemd system service。现代 Debian/Ubuntu/CentOS/Fedora
+    # 通常没有完整的 SysVinit 管理工具，继续依赖 update-rc.d 会导致自启动配置失败。
+    if command -v systemctl &> /dev/null && sudo test -d /etc/systemd/system; then
+        local systemd_service_name="${init_script_name}.service"
+        local systemd_service_file="/etc/systemd/system/${systemd_service_name}"
+
+        if sudo test -f "$systemd_service_file" || sudo test -f "$init_script_file"; then
+            dialog --colors --title "取消自启动" --yesno "账号 ${BOLD}${FG_CYAN}$qq_account${RESET} 已配置开机自启动。\n\n是否要取消该账号的开机自启动？" 10 70 2>&1 >/dev/tty
+            local choice=$?
+            clear
+            if [[ $choice -eq 0 ]]; then
+                echo "正在禁用并移除 $systemd_service_name ..."
+                sudo systemctl disable "$systemd_service_name" &> /dev/null || true
+                sudo rm -f "$systemd_service_file"
+                remove_sysv_autostart "$init_script_name" "$init_script_file"
+                sudo systemctl daemon-reload &> /dev/null || true
+                dialog --colors --msgbox "账号 ${BOLD}${FG_CYAN}$qq_account${RESET} 的开机自启动已成功取消。" 8 50
+            else
+                dialog --colors --msgbox "操作已取消，保留现有自启动配置。" 6 50
+            fi
+            return 0
+        fi
+
+        local existing_service_file=""
+        local other_qq=""
+        shopt -s nullglob
+        for file in /etc/systemd/system/nc_*.service "$init_script_dir"/nc_*; do
+            [[ ! -f "$file" ]] && continue
+            local filename=$(basename "$file")
+            if [[ "$filename" =~ nc_([0-9]+)(\.service)?$ ]] && [[ "${BASH_REMATCH[1]}" != "$qq_account" ]]; then
+                existing_service_file="$file"
+                other_qq="${BASH_REMATCH[1]}"
+                break
+            fi
+        done
+        shopt -u nullglob
+
+        if [[ -n "$existing_service_file" ]]; then
+            local existing_service_name=$(basename "$existing_service_file")
+            local conflict_choice
+            exec 3>&1
+            conflict_choice=$(dialog --colors --clear --backtitle "自启动冲突" \
+                --title "检测到冲突" \
+                --menu "已存在账号 ${BOLD}${FG_CYAN}$other_qq${RESET} 的开机自启动配置 (${existing_service_name})。\n由于使用共享 PID 文件，不建议同时启用多个。\n请选择操作:" 16 75 3 \
+                1 "替换 (禁用 $other_qq, 启用 $qq_account)" \
+                2 "取消添加 $qq_account" \
+                3 "强制添加 $qq_account (强烈不推荐!将导致异常)" \
+            2>&1 1>&3)
+            local conflict_exit_status=$?
+            exec 3>&-
+            clear
+
+            if [[ $conflict_exit_status -ne 0 ]]; then
+                dialog --colors --msgbox "操作已取消。" 6 40
+                return 1
+            fi
+
+            case "$conflict_choice" in
+                1)
+                    echo "正在禁用并移除旧自启动配置 $existing_service_name ..."
+                    sudo systemctl disable "$existing_service_name" &> /dev/null || true
+                    if [[ "$existing_service_name" == *.service ]]; then
+                        sudo rm -f "$existing_service_file"
+                    else
+                        remove_sysv_autostart "$existing_service_name" "$existing_service_file"
+                    fi
+                    sudo systemctl daemon-reload &> /dev/null || true
+                    echo "旧自启动配置已移除，继续添加新配置..."
+                    ;;
+                2)
+                    dialog --colors --msgbox "添加账号 ${BOLD}${FG_CYAN}$qq_account${RESET} 的自启动已取消。" 6 50
+                    return 1
+                    ;;
+                3)
+                    dialog --colors --infobox "${FG_YELLOW}警告：${RESET}强制添加多个自启动配置，极可能导致 PID 文件冲突和管理混乱！" 6 70
+                    sleep 3
+                    ;;
+                *)
+                    dialog --colors --msgbox "无效的选择。" 6 40
+                    return 1
+                    ;;
+            esac
+        fi
+
+        echo -e "正在为账号 ${ANSI_BOLD}${ANSI_CYAN}$qq_account${ANSI_RESET} 创建 systemd 开机自启动服务..."
+        cat <<EOF | sudo tee "$systemd_service_file" > /dev/null
+[Unit]
+Description=NapCat for QQ ${qq_account}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${TARGET_USER}
+WorkingDirectory=${TARGET_USER_HOME}
+ExecStart=/bin/bash -lc 'mkdir -p "${hardcoded_log_dir}" "${hardcoded_pid_dir}"; exec xvfb-run -a "${qq_exec_path}" --no-sandbox -q "${qq_account}" >> "${log_file}" 2>&1'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        if [[ $? -ne 0 ]]; then
+            dialog --colors --msgbox "${FG_RED}错误：${RESET}无法创建 systemd 服务 '$systemd_service_file'。\n请检查权限。" 8 70
+            return 1
+        fi
+
+        if sudo systemctl daemon-reload && sudo systemctl enable "$systemd_service_name"; then
+            dialog --colors --msgbox "账号 ${BOLD}${FG_CYAN}$qq_account${RESET} 的开机自启动已成功配置！\n服务: ${systemd_service_name}\n日志文件: ${log_file}" 11 70
+            return 0
+        else
+            sudo rm -f "$systemd_service_file"
+            sudo systemctl daemon-reload &> /dev/null || true
+            dialog --colors --msgbox "${FG_RED}错误：${RESET}启用 systemd 服务 '$systemd_service_name' 失败。\n请检查 systemctl 输出或系统日志。" 10 70
+            return 1
+        fi
     fi
 
     if ! sudo test -d "$init_script_dir"; then
@@ -1778,15 +1916,7 @@ configure_autostart() {
         case "$conflict_choice" in
             1) # 替换
                 echo "正在禁用并移除旧脚本 $existing_script_name ..."
-                if ! (sudo update-rc.d -f "$existing_script_name" remove &> /dev/null && sudo rm -f "$existing_script_file"); then
-                     # 尝试仅删除文件作为后备
-                     if ! sudo rm -f "$existing_script_file"; then
-                         dialog --colors --msgbox "${FG_RED}错误：${RESET}禁用或移除旧脚本 '$existing_script_name' 失败。\n请检查权限或手动操作后重试。" 10 70
-                         return 1
-                     else
-                         echo -e "${ANSI_YELLOW}警告：${ANSI_RESET}update-rc.d 移除旧脚本失败，但文件已删除。"
-                     fi
-                fi
+                remove_sysv_autostart "$existing_script_name" "$existing_script_file"
                 echo "旧脚本已移除，继续添加新脚本..."
                 ;;
             2) # 取消
@@ -1919,6 +2049,28 @@ EOF
     fi
 }
 
+get_autostart_status() {
+    local qq_account=$1
+    local autostart_name="nc_${qq_account}"
+    local systemd_service_name="${autostart_name}.service"
+    local init_script_file="/etc/init.d/${autostart_name}"
+
+    shopt -s nullglob
+    local systemd_enable_links=(/etc/systemd/system/*.wants/"$systemd_service_name")
+    shopt -u nullglob
+    if (( ${#systemd_enable_links[@]} > 0 )); then
+        echo "${FG_GREEN}(已启用)${RESET}"
+        return
+    fi
+
+    if [[ -f "$init_script_file" ]]; then
+        echo "${FG_GREEN}(已启用)${RESET}"
+        return
+    fi
+
+    echo "${FG_RED}(未启用)${RESET}"
+}
+
 # 函数：显示网络服务配置菜单 (菜单2)
 show_service_menu() {
     local qq_account=$1 # 虽然 WebUI 配置不直接用 qq_account，但保持函数签名一致
@@ -1994,12 +2146,8 @@ show_service_menu() {
         fi
 
         # Autostart (只有启用状态)
-        local autostart_script_name="nc_${qq_account}"
-        local autostart_script_file="/etc/init.d/${autostart_script_name}"
-        local autostart_status="${FG_RED}(未启用)${RESET}"
-        if [[ -f "$autostart_script_file" ]]; then
-             autostart_status="${FG_GREEN}(已启用)${RESET}"
-        fi
+        local autostart_status
+        autostart_status=$(get_autostart_status "$qq_account")
 
         # WebUI (只有配置状态，基于 token)
         local webui_status="${FG_RED}(未配置)${RESET}"
