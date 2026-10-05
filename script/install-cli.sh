@@ -40,7 +40,7 @@ function network_test() {
     target_proxy="" # Reset target_proxy
 
     # Define Github proxy array and check URL
-    local proxy_arr=("https://ghfast.top" "https://ghp.ci" "https://gh.wuliya.xin" "https://gh-proxy.com" "https://x.haod.me")
+    local proxy_arr=("https://ghfast.top" "https://ghproxy.net" "https://gh-proxy.com" "https://github.dpik.top" "https://ghm.078465.xyz")
     local check_url="https://raw.githubusercontent.com/NapNeko/NapCat-TUI-CLI/main/LICENSE" # Updated check URL
 
     # Check if a specific proxy number is requested and valid

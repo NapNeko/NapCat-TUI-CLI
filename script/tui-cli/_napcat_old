@@ -18,6 +18,20 @@ RUN_DIR="$INSTALL_BASE_DIR/run"
 LOG_DIR="$INSTALL_BASE_DIR/log"
 QQ_EXECUTABLE="$INSTALL_BASE_DIR/opt/QQ/qq"
 PID_FILE="$RUN_DIR/napcat.pid"
+INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/NapNeko/NapCat-Installer/main/script/install.sh"
+
+# 依次走加速节点和直连下载安装脚本，开头不是 #! 的（代理返回的报错页面）也算失败
+_download_install_script() {
+    local out="$1" proxy
+    for proxy in "https://ghfast.top/" "https://ghproxy.net/" "https://gh-proxy.com/" ""; do
+        if curl -fsSL --connect-timeout 10 -o "$out" "${proxy}${INSTALL_SCRIPT_URL}" && [[ "$(head -c 2 "$out")" == "#!" ]]; then
+            return 0
+        fi
+    done
+    rm -f "$out"
+    echo -e "${RED}安装脚本下载失败，请检查网络。${NC}"
+    return 1
+}
 
 
 # 辅助函数：递归获取所有后代 PID
@@ -473,7 +487,11 @@ update() {
     local current_qq_for_stop=""
     QQ=$current_qq_for_stop stop
     echo -e "${YELLOW}正在执行更新脚本 (需要 sudo)...${NC}"
-    curl -sSL https://nclatest.znin.net/NapNeko/NapCat-Installer/main/script/install.sh | sudo bash -s -- --docker n --cli y
+    local script
+    script=$(mktemp) || return 1
+    _download_install_script "$script" || return 1
+    sudo bash "$script" --docker n --cli y
+    rm -f "$script"
     echo -e "${GREEN}更新完成。如果之前有服务运行，请重新启动。${NC}"
 }
 
@@ -481,7 +499,11 @@ rebuild() {
     local current_qq_for_stop=""
     QQ=$current_qq_for_stop stop
     echo -e "${YELLOW}正在执行强制重建脚本 (需要 sudo)...${NC}"
-    curl -sSL https://nclatest.znin.net/NapNeko/NapCat-Installer/main/script/install.sh | sudo bash -s -- --docker n --cli y --force
+    local script
+    script=$(mktemp) || return 1
+    _download_install_script "$script" || return 1
+    sudo bash "$script" --docker n --cli y --force
+    rm -f "$script"
     echo -e "${GREEN}强制重建完成。如果之前有服务运行，请重新启动。${NC}"
 }
 
