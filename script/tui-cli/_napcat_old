@@ -19,17 +19,29 @@ LOG_DIR="$INSTALL_BASE_DIR/log"
 QQ_EXECUTABLE="$INSTALL_BASE_DIR/opt/QQ/qq"
 PID_FILE="$RUN_DIR/napcat.pid"
 INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/NapNeko/NapCat-Installer/main/script/install.sh"
+proxy_file="${XDG_CONFIG_HOME:-$HOME/.config}/napcat/github-proxy"
+if [[ -z "${NAPCAT_GITHUB_PROXY+x}" && -f "$proxy_file" ]]; then
+    read -r NAPCAT_GITHUB_PROXY < "$proxy_file"
+fi
+export NAPCAT_GITHUB_PROXY="${NAPCAT_GITHUB_PROXY:-0}"
 
-# 依次走加速节点和直连下载安装脚本，开头不是 #! 的（代理返回的报错页面）也算失败
 _download_install_script() {
-    local out="$1" proxy
-    for proxy in "https://ghfast.top/" "https://ghproxy.net/" "https://gh-proxy.com/" ""; do
-        if curl -fsSL --connect-timeout 10 -o "$out" "${proxy}${INSTALL_SCRIPT_URL}" && [[ "$(head -c 2 "$out")" == "#!" ]]; then
-            return 0
-        fi
-    done
-    rm -f "$out"
-    echo -e "${RED}安装脚本下载失败，请检查网络。${NC}"
+    local out="$1" proxy="${NAPCAT_GITHUB_PROXY:-0}" partial
+    case "$proxy" in
+        0) proxy="" ;;
+        http://*|https://*) proxy="${proxy%/}/" ;;
+        *) echo 'NAPCAT_GITHUB_PROXY 需要 0 或 HTTP(S) URL。' >&2; return 1 ;;
+    esac
+    partial=$(mktemp "${out}.XXXXXX") || return 1
+    if curl -fLsS --connect-timeout "${NAPCAT_CONNECT_TIMEOUT:-20}" --max-time "${NAPCAT_DOWNLOAD_TIMEOUT:-1800}" \
+        --proto '=http,https' --proto-redir '=http,https' \
+        -o "$partial" "${proxy}${INSTALL_SCRIPT_URL}" &&
+        [[ "$(head -c 2 "$partial")" == '#!' ]] && bash -n "$partial"; then
+        mv -- "$partial" "$out"
+        return $?
+    fi
+    rm -f -- "$partial"
+    echo '安装脚本下载或校验失败，请检查所选线路。' >&2
     return 1
 }
 
@@ -484,27 +496,27 @@ startdown() {
 }
 
 update() {
+    local script status
+    script=$(mktemp) || return 1
+    if ! _download_install_script "$script"; then
+        rm -f -- "$script"
+        return 1
+    fi
     local current_qq_for_stop=""
     QQ=$current_qq_for_stop stop
-    echo -e "${YELLOW}正在执行更新脚本 (需要 sudo)...${NC}"
-    local script
-    script=$(mktemp) || return 1
-    _download_install_script "$script" || return 1
-    sudo bash "$script" --docker n --cli y
-    rm -f "$script"
+    echo -e "${YELLOW}正在以当前用户执行更新脚本...${NC}"
+    bash "$script" --docker n --cli y --github-proxy "$NAPCAT_GITHUB_PROXY" "$@"
+    status=$?
+    rm -f -- "$script"
+    if [ "$status" -ne 0 ]; then
+        echo -e "${RED}更新失败，请检查安装脚本输出。${NC}" >&2
+        return "$status"
+    fi
     echo -e "${GREEN}更新完成。如果之前有服务运行，请重新启动。${NC}"
 }
 
 rebuild() {
-    local current_qq_for_stop=""
-    QQ=$current_qq_for_stop stop
-    echo -e "${YELLOW}正在执行强制重建脚本 (需要 sudo)...${NC}"
-    local script
-    script=$(mktemp) || return 1
-    _download_install_script "$script" || return 1
-    sudo bash "$script" --docker n --cli y --force
-    rm -f "$script"
-    echo -e "${GREEN}强制重建完成。如果之前有服务运行，请重新启动。${NC}"
+    update --force
 }
 
 #  REWRITTEN: remove function for rootless 
@@ -637,4 +649,4 @@ case "$1" in
         ;;
 esac
 
-exit 0
+exit $?

@@ -1,321 +1,139 @@
 #!/bin/bash
-
-
-
-MAGENTA='\033[0;1;35;95m'
-RED='\033[0;1;31;91m'
-YELLOW='\033[0;1;33;93m'
-GREEN='\033[0;1;32;92m'
-CYAN='\033[0;1;36;96m'
-BLUE='\033[0;1;34;94m'
-NC='\033[0m'
+set -e
 
 function log() {
-    time=$(date +"%Y-%m-%d %H:%M:%S")
-    message="[${time} CLI]: $1 " # Add CLI prefix to logs
-    case "$1" in
-    *"失败"* | *"错误"*)
-        echo -e "${RED}${message}${NC}"
-        ;;
-    *"成功"*)
-        echo -e "${GREEN}${message}${NC}"
-        ;;
-    *"警告"*)
-        echo -e "${YELLOW}${message}${NC}"
-        ;;
-    *)
-        echo -e "${BLUE}${message}${NC}"
-        ;;
-    esac
+    printf '[%s CLI]: %s\n' "$(date +'%Y-%m-%d %H:%M:%S')" "$1"
 }
 
-#  Minimal Network Test (Adapted) 
-target_proxy="" # Global variable for proxy URL
+function run_as_root() {
+    if [ "$EUID" -eq 0 ]; then
+        "$@"
+    else
+        sudo --preserve-env=http_proxy,https_proxy,all_proxy,no_proxy,HTTP_PROXY,HTTPS_PROXY,ALL_PROXY,NO_PROXY,CURL_CA_BUNDLE,SSL_CERT_FILE "$@"
+    fi
+}
+
+target_proxy=""
 
 function network_test() {
-    # $1 is now the proxy number argument
-    local proxy_num_arg=${1:-9} # Get proxy number from argument, default 9 (auto)
-    local parm1="Github" # Hardcode service to Github for this script
-    local found=0
-    target_proxy="" # Reset target_proxy
-
-    # Define Github proxy array and check URL
+    local proxy_num=${1:-9}
     local proxy_arr=("https://ghfast.top" "https://ghproxy.net" "https://gh-proxy.com" "https://github.dpik.top" "https://ghm.078465.xyz")
-    local check_url="https://raw.githubusercontent.com/NapNeko/NapCat-TUI-CLI/main/LICENSE" # Updated check URL
-
-    # Check if a specific proxy number is requested and valid
-    if [[ "${proxy_num_arg}" =~ ^[1-9][0-9]*$ ]] && [ "${proxy_num_arg}" -le ${#proxy_arr[@]} ]; then
-        log "手动指定代理序号: ${proxy_num_arg}"
-        target_proxy="${proxy_arr[$proxy_num_arg - 1]}"
-        log "将使用${parm1}代理: ${target_proxy}"
-        # Test the specified proxy (optional but good practice)
-        status=$(curl --connect-timeout 5 -o /dev/null -s -w "%{http_code}" "${target_proxy}/${check_url}")
-        if [ ${status} -ne 200 ]; then
-             log "警告: 手动指定的代理 ${target_proxy} 测试失败 (状态码: ${status})，但仍将尝试使用。"
-             # Keep target_proxy set, maybe it works for download but not check_url
-        fi
-    # Check if proxy is disabled
-    elif [ "${proxy_num_arg}" -eq 0 ]; then
-        log "代理已关闭 (--proxy 0), 将直接连接 ${parm1}..."
-        target_proxy=""
-    # Auto-detect proxy if not specified, disabled, or out of range
-    else
-        log "proxy 未指定或超出范围 (${proxy_num_arg}), 正在检查 ${parm1} 代理可用性..."
-        for proxy in "${proxy_arr[@]}"; do
-            log "测试代理: ${proxy}"
-            status=$(curl --connect-timeout 5 -o /dev/null -s -w "%{http_code}" "${proxy}/${check_url}")
-            if [ ${status} -eq 200 ]; then
-                found=1
-                target_proxy="${proxy}"
-                log "将使用 ${parm1} 代理: ${target_proxy}"
-                break
-            else
-                log "代理 ${proxy} 测试失败 (状态码: ${status})"
-            fi
-        done
-
-        if [ ${found} -eq 0 ]; then
-            log "错误: 无法通过任何代理或直连访问 ${parm1} (${check_url})。"
-            log "请检查网络连接或尝试手动指定有效代理 (--proxy 1-N)。"
-            # Return error instead of exiting, let caller handle it
-            return 1
-        fi
-    fi
-    return 0 # Return success
-}
-
-# 校验下载的文件是否为有效的 Shell 脚本
-function validate_downloaded_script() {
-    local file_path="$1"
-
-    # 文件是否存在且非空
-    if [[ ! -s "$file_path" ]]; then
-        log "校验失败: 文件为空或不存在。"
-        return 1
-    fi
-
-    # 读取第一行，判断是否以 #! 开头
-    local first_line
-    read -r first_line < "$file_path"
-    if [[ "$first_line" == "#!"* ]]; then
-        return 0 # 校验通过
-    else
-        # 校验失败时，不在这里打印日志，由调用者打印统一的错误信息
-        return 1 # 校验失败
-    fi
-}
-
-
-function check_and_install_dependencies() {
-    local missing_deps=()
-    local package_manager=""
-    local install_cmd=""
-    local update_cmd=""
-    local needs_update=false
-
-    # Detect package manager
-    if command -v apt-get &>/dev/null; then
-        package_manager="apt-get"
-        install_cmd="sudo apt-get install -y -qq"
-        update_cmd="sudo apt-get update -y -qq"
-    elif command -v dnf &>/dev/null; then
-        package_manager="dnf"
-        install_cmd="sudo dnf install -y"
-        update_cmd="sudo dnf check-update" # dnf usually doesn't need explicit update like apt
-    else
-        log "错误: 无法检测到 apt-get 或 dnf 包管理器。"
-        return 1
-    fi
-    log "检测到包管理器: ${package_manager}"
-
-    # Check for dialog
-    if ! command -v dialog &>/dev/null; then
-        log "依赖 'dialog' 未安装。"
-        missing_deps+=("dialog")
-        needs_update=true # apt needs update before install
-    else
-        log "依赖 'dialog' 已安装。"
-    fi
-
-    # Check for ffmpeg
-    if ! command -v ffmpeg &>/dev/null; then
-        log "依赖 'ffmpeg' 未安装。"
-        # On RHEL/CentOS, ffmpeg might be in EPEL or RPM Fusion
-        if [[ "$package_manager" == "dnf" ]]; then
-            log "检测到 dnf 包管理器，尝试从 GitHub 下载预编译的 ffmpeg..."
-            
-            # Create temporary array for ffmpeg handling
-            local temp_missing_deps=()
-            temp_missing_deps+=("ffmpeg")
-            
-            for dep in "${temp_missing_deps[@]}"; do
-                if [[ "$dep" == "ffmpeg" ]]; then
-                    log "从Github发布页下载ffmpeg"
-                    sudo mkdir -p /tmp/ffmpeg_install
-                    local ffmpeg_down_url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
-                    cd /tmp/ffmpeg_install
-                    
-                    # Use proxy if available
-                    local download_url="${target_proxy:+${target_proxy}/}${ffmpeg_down_url}"
-                    log "正在下载: ${download_url}"
-                    
-                    if curl -L -# "${download_url}" -o ffmpeg-master-latest-linux64-gpl.tar.xz; then
-                        log "正在解压并移动到 /opt/ffmpeg"
-                        sudo mv ffmpeg-master-latest-linux64-gpl.tar.xz ffmpeg.tar.xz
-                        sudo mkdir -p /opt
-                        sudo tar -xf ffmpeg.tar.xz -C /opt
-                        sudo mv /opt/ffmpeg-master-latest-linux64-gpl /opt/ffmpeg 2>/dev/null || true
-
-                        log "删除下载包并设置软链接"
-                        sudo rm -f ffmpeg.tar.xz
-                        sudo ln -sf /opt/ffmpeg/bin/ffmpeg /usr/bin/ffmpeg
-                        sudo ln -sf /opt/ffmpeg/bin/ffprobe /usr/bin/ffprobe
-                        
-                        # Clean up
-                        cd /
-                        sudo rm -rf /tmp/ffmpeg_install
-                        
-                        log "ffmpeg 从 GitHub 安装成功。"
-                        break
-                    else
-                        log "错误: ffmpeg 下载失败，将添加到常规安装列表。"
-                        cd /
-                        sudo rm -rf /tmp/ffmpeg_install
-                        missing_deps+=("ffmpeg")
-                    fi
+    local check_url="https://raw.githubusercontent.com/NapNeko/NapCat-TUI-CLI/main/LICENSE"
+    local proxy probe_file
+    case "$proxy_num" in
+        0) target_proxy="" ;;
+        [1-5]) target_proxy="${proxy_arr[$proxy_num - 1]}" ;;
+        http://*|https://*) target_proxy="${proxy_num%/}" ;;
+        9|auto)
+            probe_file=$(mktemp) || return 1
+            for proxy in "" "${proxy_arr[@]}"; do
+                if curl -fLsS --connect-timeout 3 --max-time 5 --max-filesize 65536 \
+                    --proto '=http,https' --proto-redir '=http,https' \
+                    -o "$probe_file" "${proxy:+${proxy}/}${check_url}" &&
+                    grep -q '^Creative Commons Attribution-NonCommercial 4.0' "$probe_file"; then
+                    target_proxy="$proxy"
+                    rm -f -- "$probe_file"
+                    log "使用 GitHub 代理: ${target_proxy}"
+                    return
                 fi
             done
-        else
-             missing_deps+=("ffmpeg")
-        fi
-        needs_update=true # apt needs update before install
-    else
-        log "依赖 'ffmpeg' 已安装。"
-    fi
-
-    # Install missing dependencies
-    if [ ${#missing_deps[@]} -gt 0 ]; then
-        log "开始安装缺失的依赖: ${missing_deps[*]}"
-        if [[ "$package_manager" == "apt-get" && "$needs_update" == true ]]; then
-            log "更新软件包列表 (${package_manager})..."
-            ${update_cmd}
-            if [ $? -ne 0 ]; then
-                 log "错误: 更新软件包列表失败。"
-                 # Continue trying to install anyway? Or return error? Let's try installing.
-            fi
-        fi
-
-        ${install_cmd} "${missing_deps[@]}"
-        if [ $? -ne 0 ]; then
-            log "错误: 安装部分或全部依赖 (${missing_deps[*]}) 失败。"
-            log "请尝试手动安装: ${install_cmd} ${missing_deps[*]}"
+            rm -f -- "$probe_file"
+            log "错误: 没有可用的 GitHub 代理。可用参数 0 选择直连，或 1-5 指定代理。"
             return 1
-        else
-            log "依赖安装成功。"
-        fi
-    else
-        log "所有 TUI-CLI 依赖已满足。"
-    fi
-    return 0
+            ;;
+        *) log "错误: 代理参数必须为 0-5、9、auto 或 HTTP(S) URL。"; return 1 ;;
+    esac
+    log "GitHub 下载方式: ${target_proxy:-直连}"
 }
 
-#  主要的安装逻辑 
-function install_cli_components() {
-    log "准备安装/更新 NapCatQQ TUI-CLI 及其组件..."
+function install_ffmpeg() (
+    local ffmpeg_arch
+    case "$(uname -m)" in
+        x86_64) ffmpeg_arch=linux64 ;;
+        aarch64) ffmpeg_arch=linuxarm64 ;;
+        *) log "错误: 不支持的 FFmpeg 架构。"; exit 1 ;;
+    esac
+    local temporary_dir
+    temporary_dir=$(mktemp -d)
+    trap 'rm -rf -- "$temporary_dir"' EXIT
+    local archive_name="ffmpeg-master-latest-${ffmpeg_arch}-gpl"
+    local download_url="${target_proxy:+${target_proxy}/}https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${archive_name}.tar.xz"
+    curl -fL --connect-timeout "${NAPCAT_CONNECT_TIMEOUT:-20}" --max-time "${NAPCAT_DOWNLOAD_TIMEOUT:-1800}" \
+        --proto '=http,https' --proto-redir '=http,https' "$download_url" -o "$temporary_dir/ffmpeg.tar.xz"
+    tar -xf "$temporary_dir/ffmpeg.tar.xz" -C "$temporary_dir"
+    "$temporary_dir/$archive_name/bin/ffmpeg" -version >/dev/null
+    "$temporary_dir/$archive_name/bin/ffprobe" -version >/dev/null
+    run_as_root install -d /opt/ffmpeg/bin /usr/local/bin
+    run_as_root install -m 755 "$temporary_dir/$archive_name/bin/ffmpeg" "$temporary_dir/$archive_name/bin/ffprobe" /opt/ffmpeg/bin/
+    run_as_root ln -sf /opt/ffmpeg/bin/ffmpeg /usr/local/bin/ffmpeg
+    run_as_root ln -sf /opt/ffmpeg/bin/ffprobe /usr/local/bin/ffprobe
+    log "FFmpeg 安装成功。"
+)
 
-    # 1. Check and install dependencies (dialog, ffmpeg)
-    if ! check_and_install_dependencies; then
-        log "错误: 依赖检查或安装失败，无法继续安装 TUI-CLI。"
+function check_and_install_dependencies() {
+    local package_manager
+    local missing_deps=()
+    if command -v apt-get >/dev/null; then
+        package_manager=apt-get
+    elif command -v dnf >/dev/null; then
+        package_manager=dnf
+    else
+        log "错误: TUI-CLI 安装脚本支持 apt-get 或 dnf。"
         return 1
     fi
-
-    # 2. Run network test based on passed argument
-    network_test "$1"
-    local network_status=$?
-    if [ $network_status -ne 0 ] && [ -z "$target_proxy" ] && [ "$1" -ne 0 ]; then
-         log "网络测试失败且未使用代理, 无法下载 CLI 文件。"
-         # Allow continuing? Maybe user has files locally? For now, fail.
-         return 1
+    if ! command -v dialog >/dev/null; then
+        missing_deps+=(dialog)
     fi
-
-    # 3. Define files, URLs, and targets    
-    # Updated base_url
-    local base_url="https://raw.githubusercontent.com/NapNeko/NapCat-TUI-CLI/main/script/tui-cli"
-    local target_dir="/usr/local/bin"
-    local files_to_download=("napcat" "_napcat_Boot" "_napcat_Config" "_napcat_old")
-    local download_failed=false
-
-    # Ensure target directory exists (though /usr/local/bin usually does)
-    sudo mkdir -p "${target_dir}"
-
-    # 4. Download and install loop
-    for file_name in "${files_to_download[@]}"; do
-        local download_url="${target_proxy:+${target_proxy}/}${base_url}/${file_name}"
-        local temp_file=$(mktemp) # Create temp file as current user
-        local target_path="${target_dir}/${file_name}"
-
-        log "下载 ${file_name} 从 ${download_url}..."
-        # Download to the temporary file (no sudo needed for curl)
-        curl -k -L -# "${download_url}" -o "${temp_file}"
-
-        if [ $? -ne 0 ]; then
-            log "${file_name} 文件下载失败, 请检查网络或链接 (${download_url})。"
-            rm -f "${temp_file}" # Clean up failed download (no sudo needed)
-            download_failed=true
-            break # 下载失败，立即停止
-        fi
-
-        # 校验步骤
-        if ! validate_downloaded_script "${temp_file}"; then
-            log "错误: 下载的 ${file_name} 文件内容无效，校验失败！请检查网络或者镜像。"
-            log "文件内容预览 (前5行):"
-            head -n 5 "${temp_file}" | sed 's/^/    /'
-            rm -f "${temp_file}"
-            download_failed=true
-            break # 立即停止后续所有下载
-        fi
-
-
-        log "${file_name} 文件下载成功: ${temp_file}"
-
-        # Move the file to the target location first (needs sudo)
-        log "移动 ${file_name} 文件到 ${target_path}..."
-        sudo mv "${temp_file}" "${target_path}"
-        if [ $? -ne 0 ]; then
-            log "移动 ${file_name} 文件到 ${target_path} 失败, 请检查权限或目标目录。"
-            # Attempt to clean up downloaded file if move failed (no sudo needed)
-            if [ -f "${temp_file}" ]; then # Check if temp file still exists
-                rm -f "${temp_file}"
-            fi
-            download_failed=true
-            continue
-        fi
-        # temp_file is removed by mv on success
-
-        # Set execute permissions AFTER moving (needs sudo)
-        log "设置 ${file_name} 文件权限: ${target_path}..."
-        sudo chmod 755 "${target_path}"
-        if [ $? -ne 0 ]; then
-            log "设置 ${file_name} 文件执行权限失败: ${target_path}"
-            # File is already moved, but permissions failed. Mark as failure.
-            download_failed=true
-            continue
+    if ! command -v jq >/dev/null; then
+        missing_deps+=(jq)
+    fi
+    if { ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; } && [ "$package_manager" = apt-get ]; then
+        missing_deps+=(ffmpeg)
+    fi
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        if [ "$package_manager" = apt-get ]; then
+            run_as_root apt-get update -y -qq
+            run_as_root apt-get install -y -qq "${missing_deps[@]}"
         else
-            log "${file_name} 文件安装并设置权限成功。"
+            run_as_root dnf install -y "${missing_deps[@]}"
         fi
-    done
-
-    # 5. Final status
-    if ${download_failed}; then
-        log "警告: 部分或全部 TUI-CLI 组件下载或安装失败。"
-        return 1 # Indicate partial or complete failure
-    else
-        log "所有 TUI-CLI 组件安装/更新成功。"
-        return 0 # Indicate success
+    fi
+    if { ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; } && [ "$package_manager" = dnf ]; then
+        run_as_root dnf install -y tar xz
+        install_ffmpeg
     fi
 }
 
-#  Script Entry Point 
-# Pass the first argument (proxy number) to the function
-install_cli_components "$1"
-exit $? # Exit with the return code of the function
+function install_cli_components() (
+    network_test "${1:-9}"
+    check_and_install_dependencies
+    local temporary_dir
+    temporary_dir=$(mktemp -d)
+    trap 'rm -rf -- "$temporary_dir"' EXIT
+    local base_url="https://raw.githubusercontent.com/NapNeko/NapCat-TUI-CLI/main/script/tui-cli"
+    local files=(napcat _napcat_Boot _napcat_Config _napcat_old)
+    local file_name
+    local first_line
+    for file_name in "${files[@]}"; do
+        curl -fL --connect-timeout "${NAPCAT_CONNECT_TIMEOUT:-20}" --max-time "${NAPCAT_DOWNLOAD_TIMEOUT:-1800}" \
+            --proto '=http,https' --proto-redir '=http,https' \
+            "${target_proxy:+${target_proxy}/}${base_url}/${file_name}" -o "$temporary_dir/$file_name"
+        read -r first_line < "$temporary_dir/$file_name"
+        if [[ "$first_line" != '#!'* ]]; then
+            log "错误: ${file_name} 不是 Shell 脚本。"
+            exit 1
+        fi
+        bash -n "$temporary_dir/$file_name"
+    done
+    run_as_root install -d /usr/local/bin
+    for file_name in "${files[@]}"; do
+        run_as_root install -m 755 "$temporary_dir/$file_name" "/usr/local/bin/$file_name"
+    done
+    local config_directory="${XDG_CONFIG_HOME:-$HOME/.config}/napcat"
+    mkdir -p -- "$config_directory"
+    printf '%s\n' "${target_proxy:-0}" > "$temporary_dir/github-proxy"
+    install -m 600 "$temporary_dir/github-proxy" "$config_directory/github-proxy"
+    log "所有 TUI-CLI 组件安装/更新成功。"
+)
+
+install_cli_components "${1:-9}"
